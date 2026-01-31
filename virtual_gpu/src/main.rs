@@ -1,6 +1,42 @@
+use crate::vgpu::shader::Shader;
+
 mod memory;
 mod vgpu;
 
+#[rustfmt::skip]
+#[allow(dead_code)]
+const TRIANGLE: [f32; 9] = [
+    -0.5, -0.5, 0.0,
+    0.5 , -0.5, 0.0,
+    0.0 , 0.5 , 0.0,
+];
+
+struct Pipeline;
+impl vgpu::shader::Shader for Pipeline {
+    fn vertex(&self, vertex: glam::Vec3) -> glam::Vec3 {
+        vertex
+    }
+
+    fn fragment(&self, frag_vertex: glam::Vec3) -> glam::Vec3 {
+        frag_vertex
+    }
+
+    fn pixel(&self, fragment: glam::Vec3) -> u32 {
+        let red = (fragment.x * 255.9999) as u8 as u32;
+        let gre = (fragment.y * 255.9999) as u8 as u32;
+        let blu = (fragment.z * 255.9999) as u8 as u32;
+        0xff_u32 << 24 | red << 16 | gre << 8 | blu
+    }
+}
+
 fn main() {
-    let gpu = vgpu::gpu::Vgpu::new(4, 4);
+    let mut gpu = vgpu::gpu::Vgpu::new(1, 1);
+    let pipeline = Pipeline;
+    gpu.bind_data(&TRIANGLE.to_vec());
+
+    dbg!(&gpu);
+
+    loop {
+        pipeline.render(&mut gpu);
+    }
 }

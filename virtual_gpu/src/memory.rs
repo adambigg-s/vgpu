@@ -4,9 +4,22 @@ pub type Raster<T> = buffer::Buffer<T, 2>;
 
 pub type Array<T> = buffer::Buffer<T, 1>;
 
+impl<T> Default for Raster<T> {
+    fn default() -> Self {
+        Self::new([0, 0])
+    }
+}
+
+impl<T> Default for Array<T> {
+    fn default() -> Self {
+        Self::new([0])
+    }
+}
+
 pub mod buffer {
     use std::{convert, mem, ops};
 
+    #[derive(Debug)]
     pub struct Buffer<T, const N: usize> {
         size: [usize; N],
         items: Box<[T]>,
@@ -98,7 +111,10 @@ pub mod buffer {
 }
 
 pub mod stack {
-    use std::{mem, ops::{Index, IndexMut}};
+    use std::{
+        mem,
+        ops::{Index, IndexMut},
+    };
 
     pub struct Vec<T, const N: usize> {
         len: usize,
