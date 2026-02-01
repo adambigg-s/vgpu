@@ -2,6 +2,7 @@ pub mod gpu {
     use std::clone;
 
     use glam::Vec3Swizzles;
+    use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
     use crate::{
         interp, memory,
@@ -35,7 +36,7 @@ pub mod gpu {
             &mut self,
             program: &S,
             color: &mut memory::Raster<u32>,
-            depth: &mut memory::Raster<f32>,
+            _depth: &mut memory::Raster<f32>,
         ) where
             S: shader::Shader,
         {
@@ -55,8 +56,12 @@ pub mod gpu {
                     if !bary.surrounds(lambdas) {
                         continue;
                     }
+                    let frag_vertex = interp::weighted_sum(self.vertices_in, lambdas.to_array());
 
-                    *color.get_mut([col as usize, row as usize]) = 0xff00ffff;
+                    let fragment = program.fragment(frag_vertex);
+                    let pixel = program.pixel(fragment);
+
+                    *color.get_mut([col as usize, row as usize]) = pixel;
                 }
             }
         }
@@ -138,7 +143,7 @@ pub mod gpu {
         pub depth: memory::Raster<f32>,
 
         pub vao: memory::Array<f32>,
-        pub vao_layout: VaoPointer,
+        pub _layout: VaoPointer,
     }
 
     impl Vgpu {
@@ -156,19 +161,26 @@ pub mod gpu {
 
         pub fn cycle_vertex_cores<S>(&mut self, program: &S)
         where
-            S: shader::Shader,
+            S: shader::Shader + Send + Sync,
         {
-            for core in self.vertex_cores.iter_mut() {
+            self.vertex_cores.par_iter_mut().for_each(|core| {
                 core.process(program);
-            }
+            });
         }
 
         pub fn cycle_raster_cores<S>(&mut self, program: &S)
         where
-            S: shader::Shader,
+            S: shader::Shader + Send + Sync,
         {
-            for core in self.raster_cores.iter_mut() {
-                core.process(program, &mut self.color, &mut self.depth);
+            let color = &self.color;
+            let depth = &self.depth;
+            #[allow(invalid_reference_casting)]
+            unsafe {
+                self.raster_cores.par_iter_mut().for_each(|core| {
+                    let color = color as *const memory::Raster<u32> as *mut memory::Raster<u32>;
+                    let depth = depth as *const memory::Raster<f32> as *mut memory::Raster<f32>;
+                    core.process(program, &mut *color, &mut *depth);
+                });
             }
         }
     }
@@ -189,7 +201,7 @@ pub mod shader {
         /// !!! NO OVERRIDE !!!
         fn render(&self, target: &mut gpu::Vgpu)
         where
-            Self: Sized,
+            Self: Sized + Send + Sync,
         {
             debug_assert!(target.color.size() == target.depth.size(), "Buffer dimensions must match");
             target.scheduler.load_geometry_cores(&mut target.vertex_cores, &target.vao);

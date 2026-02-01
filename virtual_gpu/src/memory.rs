@@ -2,13 +2,17 @@
 
 pub type Raster<T> = buffer::Buffer<T, 2>;
 
-pub type Array<T> = buffer::Buffer<T, 1>;
-
 impl<T> Default for Raster<T> {
     fn default() -> Self {
         Self::new([0, 0])
     }
 }
+
+unsafe impl<T> Send for Raster<T> {}
+
+unsafe impl<T> Sync for Raster<T> {}
+
+pub type Array<T> = buffer::Buffer<T, 1>;
 
 impl<T> Default for Array<T> {
     fn default() -> Self {

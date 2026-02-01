@@ -9,10 +9,13 @@ mod vgpu;
 
 #[rustfmt::skip]
 #[allow(dead_code)]
-const TRIANGLE: [f32; 9] = [
+const TRIANGLE: [f32; 18] = [
     -0.5, -0.5, 0.0,
     0.5 , -0.5, 0.0,
     0.0 , 0.5 , 0.0,
+    -0.5, -0.5, 0.0,
+    0.5 , -0.5, 0.0,
+    0.5 , 0.5 , 0.0,
 ];
 
 struct Pipeline;
@@ -33,15 +36,24 @@ impl shader::Shader for Pipeline {
     }
 }
 
+const SWIDTH: usize = 100;
+const SHEIGHT: usize = 100;
+
 fn main() {
-    let mut gpu = gpu::Vgpu::new(1, 1);
-    gpu.color = memory::Raster::new([100, 100]);
-    gpu.depth = memory::Raster::new([100, 100]);
+    let mut gpu = gpu::Vgpu::new(2, 2);
+    gpu.color = memory::Raster::new([SWIDTH, SHEIGHT]);
+    gpu.depth = memory::Raster::new([SWIDTH, SHEIGHT]);
 
     let pipeline = Pipeline;
     gpu.bind_data(&TRIANGLE.to_vec());
 
-    let mut window = minifb::Window::new("Virtual GPU", 100, 100, Default::default()).unwrap();
+    let mut window = minifb::Window::new(
+        "Virtual GPU",
+        SWIDTH,
+        SHEIGHT,
+        minifb::WindowOptions { scale: minifb::Scale::X4, ..Default::default() },
+    )
+    .unwrap();
 
     while !window.is_key_down(minifb::Key::Escape) {
         pipeline.render(&mut gpu);

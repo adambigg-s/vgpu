@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::ops;
+
 pub struct BarycentricSystem {
     a: glam::Vec2,
     b: glam::Vec2,
@@ -23,5 +25,29 @@ impl BarycentricSystem {
 
     pub fn surrounds(&self, lambdas: glam::Vec3) -> bool {
         lambdas.x >= 0.0 && lambdas.y >= 0.0 && lambdas.z >= 0.0
+    }
+}
+
+pub fn weighted_sum<V, W, T, F>(values: V, weights: W) -> T
+where
+    T: Default + ops::Add<T, Output = T> + ops::Mul<F, Output = T>,
+    V: IntoIterator<Item = T>,
+    W: IntoIterator<Item = F>,
+{
+    values
+        .into_iter()
+        .zip(weights)
+        .fold(T::default(), |accumulator, (val, weight)| accumulator + val * weight)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::interp::weighted_sum;
+
+    #[test]
+    fn weighted_sum_test() {
+        let values = [1, 2, 3];
+        let weights = [1, 2, 3];
+        assert!(weighted_sum(values, weights) == 14);
     }
 }
