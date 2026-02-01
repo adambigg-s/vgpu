@@ -40,7 +40,11 @@ pub mod buffer {
         pub fn from_parts<S>(size: [usize; N], items: S) -> Self
         where
             Box<[T]>: convert::From<S>,
+            S: Clone,
         {
+            debug_assert!(
+                size.iter().product::<usize>() == convert::Into::<Box<[T]>>::into(items.clone()).len()
+            );
             Self { size, items: items.into() }
         }
 
@@ -111,10 +115,7 @@ pub mod buffer {
 }
 
 pub mod stack {
-    use std::{
-        mem,
-        ops::{Index, IndexMut},
-    };
+    use std::{mem, ops};
 
     pub struct Vec<T, const N: usize> {
         len: usize,
@@ -146,7 +147,7 @@ pub mod stack {
         }
     }
 
-    impl<T, const N: usize> Index<usize> for Vec<T, N> {
+    impl<T, const N: usize> ops::Index<usize> for Vec<T, N> {
         type Output = T;
 
         fn index(&self, index: usize) -> &Self::Output {
@@ -154,7 +155,7 @@ pub mod stack {
         }
     }
 
-    impl<T, const N: usize> IndexMut<usize> for Vec<T, N> {
+    impl<T, const N: usize> ops::IndexMut<usize> for Vec<T, N> {
         fn index_mut(&mut self, index: usize) -> &mut Self::Output {
             unsafe { self.items[index].assume_init_mut() }
         }

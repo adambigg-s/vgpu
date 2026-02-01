@@ -3,19 +3,81 @@
 pub mod gpu {
     use std::clone;
 
-    use crate::memory;
+    use crate::{
+        memory,
+        vgpu::shader::{self},
+    };
+
+    pub type Vertex = glam::Vec3;
 
     #[derive(Default, Debug)]
-    pub struct GeometryCore {}
+    pub struct GeometryCore {
+        vertices_in: [Vertex; 3],
+        vertices_out: [Vertex; 3],
+    }
+
+    impl GeometryCore {
+        pub fn process<S>(&mut self, program: S)
+        where
+            S: shader::Shader,
+        {
+            self.vertices_out = self.vertices_in.map(|vertex| program.vertex(vertex));
+        }
+    }
 
     #[derive(Default, Debug)]
-    pub struct RasterCore {}
+    pub struct RasterCore {
+        vertices_in: [Vertex; 3],
+        vertices_out: [Vertex; 3],
+    }
+
+    impl RasterCore {
+        pub fn process<S>(&mut self, program: S)
+        where
+            S: shader::Shader,
+        {
+            self.vertices_out = self.vertices_in.map(|vertex| program.fragment(vertex));
+        }
+    }
 
     #[derive(Default, Debug)]
     pub struct VaoPointer {}
 
     #[derive(Default, Debug)]
-    pub struct Scheduler {}
+    pub struct Scheduler {
+        head: usize,
+    }
+
+    impl Scheduler {
+        pub fn load_geometry_cores(
+            &mut self,
+            cores: &mut memory::Array<GeometryCore>,
+            data: &memory::Array<f32>,
+        ) {
+            const VSIZE: usize = 3;
+            self.head = 0;
+            let num_cores = cores.len();
+
+            #[allow(clippy::identity_op)]
+            for i in 0..num_cores {
+                debug_assert!(data.len() >= self.head + 9, "data: {}\nhead: {}", data.len(), self.head);
+
+                let v1 = glam::Vec3::from_slice(&data[self.head + 0..self.head + 3]);
+                let v2 = glam::Vec3::from_slice(&data[self.head + 3..self.head + 6]);
+                let v3 = glam::Vec3::from_slice(&data[self.head + 6..self.head + 9]);
+                cores[i].vertices_in = [v1, v2, v3];
+
+                self.head += 9;
+            }
+        }
+
+        pub fn load_raster_cores(
+            &mut self,
+            cores: &mut memory::Array<RasterCore>,
+            data: &mut memory::Array<f32>,
+        ) {
+        }
+    }
 
     #[derive(Default, Debug)]
     pub struct Vgpu {
@@ -58,6 +120,8 @@ pub mod shader {
         fn pixel(&self, fragment: glam::Vec3) -> u32;
 
         /// !!! NO OVERRIDE !!!
-        fn render(&self, target: &mut gpu::Vgpu) {}
+        fn render(&self, target: &mut gpu::Vgpu) {
+            target.scheduler.load_geometry_cores(&mut target.vertex_cores, &target.vao);
+        }
     }
 }

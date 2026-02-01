@@ -1,5 +1,9 @@
-use crate::vgpu::shader::Shader;
+use crate::vgpu::{
+    gpu,
+    shader::{self, Shader},
+};
 
+mod interp;
 mod memory;
 mod vgpu;
 
@@ -12,7 +16,7 @@ const TRIANGLE: [f32; 9] = [
 ];
 
 struct Pipeline;
-impl vgpu::shader::Shader for Pipeline {
+impl shader::Shader for Pipeline {
     fn vertex(&self, vertex: glam::Vec3) -> glam::Vec3 {
         vertex
     }
@@ -30,13 +34,13 @@ impl vgpu::shader::Shader for Pipeline {
 }
 
 fn main() {
-    let mut gpu = vgpu::gpu::Vgpu::new(1, 1);
+    let mut gpu = gpu::Vgpu::new(1, 1);
     let pipeline = Pipeline;
     gpu.bind_data(&TRIANGLE.to_vec());
 
-    dbg!(&gpu);
-
-    loop {
+    for _ in 0..100 {
         pipeline.render(&mut gpu);
     }
+
+    dbg!(&gpu);
 }
