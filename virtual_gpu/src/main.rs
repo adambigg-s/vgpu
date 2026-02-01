@@ -35,12 +35,16 @@ impl shader::Shader for Pipeline {
 
 fn main() {
     let mut gpu = gpu::Vgpu::new(1, 1);
+    gpu.color = memory::Raster::new([100, 100]);
+    gpu.depth = memory::Raster::new([100, 100]);
+
     let pipeline = Pipeline;
     gpu.bind_data(&TRIANGLE.to_vec());
 
-    for _ in 0..100 {
-        pipeline.render(&mut gpu);
-    }
+    let mut window = minifb::Window::new("Virtual GPU", 100, 100, Default::default()).unwrap();
 
-    dbg!(&gpu);
+    while !window.is_key_down(minifb::Key::Escape) {
+        pipeline.render(&mut gpu);
+        window.update_with_buffer(&gpu.color, gpu.color.size()[0], gpu.color.size()[1]).unwrap();
+    }
 }
