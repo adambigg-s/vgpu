@@ -44,11 +44,9 @@ pub mod buffer {
         pub fn from_parts<S>(size: [usize; N], items: S) -> Self
         where
             Box<[T]>: convert::From<S>,
-            S: Clone,
+            S: AsRef<[T]>,
         {
-            debug_assert!(
-                size.iter().product::<usize>() == convert::Into::<Box<[T]>>::into(items.clone()).len()
-            );
+            debug_assert!(size.iter().product::<usize>() == items.as_ref().len());
             Self { size, items: items.into() }
         }
 

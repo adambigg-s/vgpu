@@ -1,3 +1,5 @@
+use std::time;
+
 use crate::vgpu::{
     gpu,
     shader::{self, Shader},
@@ -9,13 +11,10 @@ mod vgpu;
 
 #[rustfmt::skip]
 #[allow(dead_code)]
-const TRIANGLE: [f32; 18] = [
+const TRIANGLE: [f32; 9] = [
     -0.5, -0.5, 0.0,
     0.5 , -0.5, 0.0,
     0.0 , 0.5 , 0.0,
-    -0.5, -0.5, 0.0,
-    0.5 , -0.5, 0.0,
-    0.5 , 0.5 , 0.0,
 ];
 
 struct Pipeline;
@@ -24,8 +23,8 @@ impl shader::Shader for Pipeline {
         vertex
     }
 
-    fn fragment(&self, frag_vertex: glam::Vec3) -> glam::Vec3 {
-        frag_vertex
+    fn fragment(&self, _: glam::Vec3) -> glam::Vec3 {
+        glam::vec3(1.0, 0.2, 0.4)
     }
 
     fn pixel(&self, fragment: glam::Vec3) -> u32 {
@@ -36,11 +35,12 @@ impl shader::Shader for Pipeline {
     }
 }
 
-const SWIDTH: usize = 100;
-const SHEIGHT: usize = 100;
+const SWIDTH: usize = 300;
+const SHEIGHT: usize = 300;
+const SCALE: minifb::Scale = minifb::Scale::X4;
 
 fn main() {
-    let mut gpu = gpu::Vgpu::new(2, 2);
+    let mut gpu = gpu::Gpu::new(2, 2);
     gpu.color = memory::Raster::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::Raster::new([SWIDTH, SHEIGHT]);
 
@@ -51,12 +51,18 @@ fn main() {
         "Virtual GPU",
         SWIDTH,
         SHEIGHT,
-        minifb::WindowOptions { scale: minifb::Scale::X4, ..Default::default() },
+        minifb::WindowOptions { scale: SCALE, ..Default::default() },
     )
     .unwrap();
+    window.set_target_fps(999);
 
+    let mut clock = time::Instant::now();
     while !window.is_key_down(minifb::Key::Escape) {
         pipeline.render(&mut gpu);
+
         window.update_with_buffer(&gpu.color, gpu.color.size()[0], gpu.color.size()[1]).unwrap();
+
+        println!("{:.2} fps", clock.elapsed().as_secs_f64().recip());
+        clock = time::Instant::now();
     }
 }

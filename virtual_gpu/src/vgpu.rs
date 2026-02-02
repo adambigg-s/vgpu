@@ -1,20 +1,14 @@
-pub mod gpu {
-    use std::clone;
-
+pub mod cores {
     use glam::Vec3Swizzles;
-    use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
-    use crate::{
-        interp, memory,
-        vgpu::shader::{self},
-    };
+    use crate::{interp, memory, vgpu::shader};
 
     pub type Vertex = glam::Vec3;
 
     #[derive(Default, Debug)]
     pub struct GeometryCore {
-        vertices_in: [Vertex; 3],
-        vertices_out: [Vertex; 3],
+        pub vertices_in: [Vertex; 3],
+        pub vertices_out: [Vertex; 3],
     }
 
     impl GeometryCore {
@@ -28,7 +22,7 @@ pub mod gpu {
 
     #[derive(Default, Debug)]
     pub struct RasterCore {
-        vertices_in: [Vertex; 3],
+        pub vertices_in: [Vertex; 3],
     }
 
     impl RasterCore {
@@ -36,7 +30,7 @@ pub mod gpu {
             &mut self,
             program: &S,
             color: &mut memory::Raster<u32>,
-            _depth: &mut memory::Raster<f32>,
+            depth: &mut memory::Raster<f32>,
         ) where
             S: shader::Shader,
         {
@@ -62,6 +56,7 @@ pub mod gpu {
                     let pixel = program.pixel(fragment);
 
                     *color.get_mut([col as usize, row as usize]) = pixel;
+                    *depth.get_mut([col as usize, row as usize]) = fragment.z;
                 }
             }
         }
@@ -78,9 +73,27 @@ pub mod gpu {
             [minx, miny, maxx, maxy]
         }
     }
+}
+
+pub mod gpu {
+    use std::clone;
+
+    use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+
+    use crate::{
+        memory,
+        vgpu::{
+            cores,
+            shader::{self},
+        },
+    };
 
     #[derive(Default, Debug)]
-    pub struct VaoPointer {}
+    pub struct VaoPointer {
+        location: usize,
+        stride: usize,
+        offset: usize,
+    }
 
     #[derive(Default, Debug)]
     pub struct Scheduler {
@@ -90,7 +103,7 @@ pub mod gpu {
     impl Scheduler {
         pub fn load_geometry_cores(
             &mut self,
-            cores: &mut memory::Array<GeometryCore>,
+            cores: &mut memory::Array<cores::GeometryCore>,
             data: &memory::Array<f32>,
         ) {
             const VSIZE: usize = 3;
@@ -123,8 +136,8 @@ pub mod gpu {
 
         pub fn load_raster_cores(
             &mut self,
-            cores: &mut memory::Array<RasterCore>,
-            data: &memory::Array<GeometryCore>,
+            cores: &mut memory::Array<cores::RasterCore>,
+            data: &memory::Array<cores::GeometryCore>,
         ) {
             debug_assert!(cores.len() == data.len());
             for i in 0..cores.len() {
@@ -134,9 +147,9 @@ pub mod gpu {
     }
 
     #[derive(Default, Debug)]
-    pub struct Vgpu {
-        pub vertex_cores: memory::Array<GeometryCore>,
-        pub raster_cores: memory::Array<RasterCore>,
+    pub struct Gpu {
+        pub vertex_cores: memory::Array<cores::GeometryCore>,
+        pub raster_cores: memory::Array<cores::RasterCore>,
         pub scheduler: Scheduler,
 
         pub color: memory::Raster<u32>,
@@ -146,7 +159,7 @@ pub mod gpu {
         pub _layout: VaoPointer,
     }
 
-    impl Vgpu {
+    impl Gpu {
         pub fn new(vcores: usize, rcores: usize) -> Self {
             Self {
                 vertex_cores: memory::Array::new([vcores]),
@@ -199,7 +212,7 @@ pub mod shader {
         fn pixel(&self, fragment: glam::Vec3) -> u32;
 
         /// !!! NO OVERRIDE !!!
-        fn render(&self, target: &mut gpu::Vgpu)
+        fn render(&self, target: &mut gpu::Gpu)
         where
             Self: Sized + Send + Sync,
         {
