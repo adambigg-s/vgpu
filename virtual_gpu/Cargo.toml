@@ -7,3 +7,7 @@ edition = "2024"
 glam = "0.31.0"
 minifb = "0.28.0"
 rayon = "1.11.0"
+
+[profile.release]
+lto = "fat"
+opt-level = 3

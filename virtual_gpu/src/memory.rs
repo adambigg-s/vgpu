@@ -1,16 +1,48 @@
 #![allow(dead_code)]
 
-pub type Raster<T> = buffer::Buffer<T, 2>;
+pub trait Raster {
+    type Item;
 
-impl<T> Default for Raster<T> {
+    fn size(&self) -> [usize; 2];
+
+    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item;
+
+    fn width(&self) -> usize;
+
+    fn height(&self) -> usize;
+}
+
+impl<T> Raster for RenderTarget<T> {
+    type Item = T;
+
+    fn size(&self) -> [usize; 2] {
+        self.size()
+    }
+
+    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item {
+        self.get_mut([x, y])
+    }
+
+    fn width(&self) -> usize {
+        self.size()[0]
+    }
+
+    fn height(&self) -> usize {
+        self.size()[1]
+    }
+}
+
+pub type RenderTarget<T> = buffer::Buffer<T, 2>;
+
+impl<T> Default for RenderTarget<T> {
     fn default() -> Self {
         Self::new([0, 0])
     }
 }
 
-unsafe impl<T> Send for Raster<T> {}
+unsafe impl<T> Send for RenderTarget<T> {}
 
-unsafe impl<T> Sync for Raster<T> {}
+unsafe impl<T> Sync for RenderTarget<T> {}
 
 pub type Array<T> = buffer::Buffer<T, 1>;
 
@@ -119,6 +151,7 @@ pub mod buffer {
 pub mod stack {
     use std::{mem, ops};
 
+    #[derive(Debug)]
     pub struct Vec<T, const N: usize> {
         len: usize,
         items: [mem::MaybeUninit<T>; N],
@@ -146,6 +179,12 @@ pub mod stack {
             debug_assert!(self.len != 0);
             self.len -= 1;
             unsafe { self.items[self.len].assume_init_read() }
+        }
+    }
+
+    impl<T, const N: usize> Default for Vec<T, N> {
+        fn default() -> Self {
+            Self { len: Default::default(), items: Self::ITEMS }
         }
     }
 
