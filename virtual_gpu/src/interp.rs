@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::ops;
 
 pub struct BarycentricSystem {
@@ -46,7 +44,10 @@ pub struct Vector<T, const N: usize> {
     items: [T; N],
 }
 
-impl<T, const N: usize> Vector<T, N> {
+impl<T, const N: usize> Vector<T, N>
+where
+    T: Clone + Copy,
+{
     pub fn to_array(self) -> [T; N] {
         self.items
     }
@@ -95,9 +96,9 @@ where
     type Output = Self;
 
     fn mul(mut self, rhs: D) -> Self::Output {
-        for i in 0..N {
+        (0..N).for_each(|i| {
             self.items[i] = self.items[i] * rhs;
-        }
+        });
         self
     }
 }

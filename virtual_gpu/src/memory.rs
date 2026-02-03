@@ -1,15 +1,16 @@
-#![allow(dead_code)]
-
+#[allow(dead_code)]
 pub trait Raster {
     type Item;
 
     fn size(&self) -> [usize; 2];
 
-    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item;
-
     fn width(&self) -> usize;
 
     fn height(&self) -> usize;
+
+    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item;
+
+    fn peek(&mut self, x: usize, y: usize) -> &Self::Item;
 }
 
 impl<T> Raster for RenderTarget<T> {
@@ -19,16 +20,20 @@ impl<T> Raster for RenderTarget<T> {
         self.size()
     }
 
-    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item {
-        self.get_mut([x, y])
-    }
-
     fn width(&self) -> usize {
         self.size()[0]
     }
 
     fn height(&self) -> usize {
         self.size()[1]
+    }
+
+    fn get(&mut self, x: usize, y: usize) -> &mut Self::Item {
+        RenderTarget::get_mut(self, [x, y])
+    }
+
+    fn peek(&mut self, x: usize, y: usize) -> &Self::Item {
+        RenderTarget::get(self, [x, y])
     }
 }
 
@@ -61,6 +66,7 @@ pub mod buffer {
         items: Box<[T]>,
     }
 
+    #[allow(dead_code)]
     impl<T, const N: usize> Buffer<T, N> {
         pub fn new(size: [usize; N]) -> Self {
             Self {
@@ -88,7 +94,7 @@ pub mod buffer {
 
         pub fn fill(&mut self, fill: T)
         where
-            T: Copy,
+            T: Clone + Copy,
         {
             self.items.iter_mut().for_each(|item| *item = fill);
         }
@@ -166,8 +172,7 @@ pub mod stack {
         }
 
         pub fn from_parts(len: usize, items: [T; N]) -> Self {
-            // TODO:
-            // Add the same checks as above to ensure the lenghts are valid
+            debug_assert!(len < N);
             Self {
                 len,
                 items: items.map(|item| mem::MaybeUninit::new(item)),
