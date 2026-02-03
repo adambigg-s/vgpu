@@ -19,21 +19,46 @@ const TRIANGLE: [f32; 9] = [
 
 struct Pipeline;
 impl shader::Shader for Pipeline {
-    fn vertex(&self, vertex: glam::Vec3) -> glam::Vec3 {
-        vertex
+    type Vertex = [f32; 6];
+
+    type VertexAttribs = [f32; 6];
+
+    type Fragment = [f32; 3];
+
+    type Pixel = u32;
+
+    fn vertex(&self, vertex: &Self::Vertex) -> (glam::Vec3, Self::VertexAttribs) {
+        (glam::Vec3::from_slice(&vertex[0..3]), *vertex)
     }
 
-    fn fragment(&self, _: glam::Vec3) -> glam::Vec3 {
-        glam::vec3(1.0, 0.2, 0.4)
+    fn fragment(&self, _: &Self::VertexAttribs) -> Self::Fragment {
+        [1.0, 0.2, 0.4]
     }
 
-    fn pixel(&self, fragment: glam::Vec3) -> u32 {
-        let red = (fragment.x * 255.9999) as u8 as u32;
-        let gre = (fragment.y * 255.9999) as u8 as u32;
-        let blu = (fragment.z * 255.9999) as u8 as u32;
+    fn pixel(&self, fragment: &Self::Fragment) -> Self::Pixel {
+        let red = (fragment[0] * 255.9999) as u8 as u32;
+        let gre = (fragment[1] * 255.9999) as u8 as u32;
+        let blu = (fragment[2] * 255.9999) as u8 as u32;
         0xffu32 << 24 | red << 16 | gre << 8 | blu
     }
 }
+
+// impl shader::Shader for Pipeline {
+//     fn vertex(&self, vertex: glam::Vec3) -> glam::Vec3 {
+//         vertex
+//     }
+
+//     fn fragment(&self, _: glam::Vec3) -> glam::Vec3 {
+//         glam::vec3(1.0, 0.2, 0.4)
+//     }
+
+//     fn pixel(&self, fragment: glam::Vec3) -> u32 {
+//         let red = (fragment.x * 255.9999) as u8 as u32;
+//         let gre = (fragment.y * 255.9999) as u8 as u32;
+//         let blu = (fragment.z * 255.9999) as u8 as u32;
+//         0xffu32 << 24 | red << 16 | gre << 8 | blu
+//     }
+// }
 
 const SWIDTH: usize = 128;
 const SHEIGHT: usize = 128;
