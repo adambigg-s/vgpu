@@ -165,6 +165,15 @@ pub mod stack {
             Self { len: Default::default(), items: Self::ITEMS }
         }
 
+        pub fn from_parts(len: usize, items: [T; N]) -> Self {
+            // TODO:
+            // Add the same checks as above to ensure the lenghts are valid
+            Self {
+                len,
+                items: items.map(|item| mem::MaybeUninit::new(item)),
+            }
+        }
+
         pub fn len(&self) -> usize {
             self.len
         }
