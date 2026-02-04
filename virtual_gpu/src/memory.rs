@@ -183,6 +183,10 @@ pub mod stack {
             self.len
         }
 
+        pub fn capacity(&self) -> usize {
+            N
+        }
+
         pub fn push(&mut self, item: T) {
             debug_assert!(self.len != N);
             self.items[self.len] = mem::MaybeUninit::new(item);
@@ -256,5 +260,40 @@ pub mod stack {
 
             None
         }
+    }
+}
+
+#[allow(dead_code)]
+mod transmute {
+    #[inline(always)]
+    pub unsafe fn bit_transmute<T, D, const N: usize>(value: &T) -> [D; N]
+    where
+        D: Clone + Copy,
+    {
+        unsafe { *(value as *const T as *const [D; N]) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::memory::transmute;
+
+    #[test]
+    #[rustfmt::skip]
+    fn bitwise_transmute() {
+        #[repr(C, packed)]
+        struct FooBar {
+            _v3: glam::Vec3,
+            _v2: glam::Vec2,
+        }
+        let foobar = FooBar {
+            _v3: glam::vec3(1.0, 2.0, 3.0),
+            _v2: glam::vec2(4.0, 5.0),
+        };
+        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 5>(&foobar) } == [1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 4>(&foobar) } == [1.0, 2.0, 3.0, 4.0]);
+        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 3>(&foobar) } == [1.0, 2.0, 3.0]);
+        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 2>(&foobar) } == [1.0, 2.0]);
+        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 1>(&foobar) } == [1.0]);
     }
 }

@@ -14,24 +14,39 @@ const TRIANGLE: [f32; 18] = [
     0.1, 0.5, 0.0, 0.4, 0.0, 1.0,
 ];
 
+#[repr(C, packed)]
+struct Vertex {
+    pos: glam::Vec3,
+    col: glam::Vec3,
+}
+
+#[repr(C, packed)]
+struct Fragment {
+    col: glam::Vec3,
+}
+
 struct Pipeline;
 impl shader::Shader for Pipeline {
-    type Vertex = [f32; 6];
+    type Vertex = Vertex;
 
-    type VertexAttribs = [f32; 6];
+    type Interpolant = Fragment;
 
-    type Fragment = [f32; 3];
+    type Fragment = glam::Vec3;
 
     type Pixel = u32;
 
-    fn vertex(&self, vertex: &Self::Vertex) -> (glam::Vec3, Self::VertexAttribs) {
-        (glam::Vec3::from_slice(&vertex[0..3]), *vertex)
+    #[inline]
+    fn vertex(&self, vertex: &Self::Vertex, pos_out: &mut glam::Vec3) -> Self::Interpolant {
+        *pos_out = vertex.pos;
+        Fragment { col: vertex.col }
     }
 
-    fn fragment(&self, frag_vertex: &Self::VertexAttribs) -> Self::Fragment {
-        [frag_vertex[3], frag_vertex[4], frag_vertex[5]]
+    #[inline]
+    fn fragment(&self, frag_vertex: &Self::Interpolant) -> Self::Fragment {
+        frag_vertex.col
     }
 
+    #[inline]
     fn pixel(&self, fragment: &Self::Fragment) -> Self::Pixel {
         let red = (fragment[0] * 255.9999) as u8 as u32;
         let gre = (fragment[1] * 255.9999) as u8 as u32;
@@ -40,24 +55,19 @@ impl shader::Shader for Pipeline {
     }
 }
 
-const SWIDTH: usize = 48;
-const SHEIGHT: usize = 48;
-const SCALE: minifb::Scale = minifb::Scale::X16;
+const SWIDTH: usize = 400;
+const SHEIGHT: usize = 300;
+const SCALE: minifb::Scale = minifb::Scale::X4;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 
 fn main() {
-    let mut gpu = gpu::Gpu::new(1, 1);
+    let mut gpu = gpu::Gpu::new(4, 4);
     gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
 
     let pipeline = Pipeline;
-    gpu.bind_data(&TRIANGLE.to_vec());
     gpu.set_vattrib_ptr(6);
-
-    for i in 0..300 {
-        let string = String::from("asdf");
-        println!("string: {}", string);
-    }
+    gpu.bind_data(&TRIANGLE.to_vec());
 
     let mut window = minifb::Window::new(
         "Virtual GPU",
@@ -69,8 +79,8 @@ fn main() {
     window.set_target_fps(999);
 
     while !window.is_key_down(minifb::Key::Escape) {
-        // gpu.color.fill(SFILL);
-        // gpu.depth.fill(f32::INFINITY);
+        gpu.color.fill(SFILL);
+        gpu.depth.fill(f32::MAX);
         pipeline.render(&mut gpu);
 
         window.update_with_buffer(&gpu.color, gpu.color.size()[0], gpu.color.size()[1]).unwrap();

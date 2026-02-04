@@ -5,12 +5,12 @@ pub mod cores {
 
     use crate::{interp, memory, vgpu::shader};
 
-    pub type GenericVertex = [f32; 9];
+    pub type FloatRegister = [f32; 9];
 
     #[derive(Default, Debug)]
     pub struct GeometryCore {
-        pub vertices_in: [GenericVertex; 3],
-        pub attribs_out: [GenericVertex; 3],
+        pub vertices_in: [FloatRegister; 3],
+        pub attribs_out: [FloatRegister; 3],
         pub positions_out: [glam::Vec3; 3],
     }
 
@@ -20,15 +20,16 @@ pub mod cores {
             S: shader::Shader,
         {
             debug_assert!(
-                size_of::<S::Vertex>() < size_of::<GenericVertex>()
-                    && size_of::<S::VertexAttribs>() < size_of::<GenericVertex>(),
+                size_of::<S::Vertex>() < size_of::<FloatRegister>()
+                    && size_of::<S::Interpolant>() < size_of::<FloatRegister>(),
                 "Vertex attributes are too large for core buffers"
             );
 
             for i in 0..3 {
                 let vertex = unsafe { &*(self.vertices_in[i].as_ptr() as *const S::Vertex) };
-                let (pos, attrib) = program.vertex(vertex);
-                let attrib = unsafe { *(&attrib as *const S::VertexAttribs as *const GenericVertex) };
+                let mut pos = glam::Vec3::default();
+                let attrib = program.vertex(vertex, &mut pos);
+                let attrib = unsafe { *(&attrib as *const S::Interpolant as *const FloatRegister) };
                 self.attribs_out[i] = attrib;
                 self.positions_out[i] = pos;
             }
@@ -37,7 +38,7 @@ pub mod cores {
 
     #[derive(Default, Debug)]
     pub struct RasterCore {
-        pub attribs_in: [GenericVertex; 3],
+        pub attribs_in: [FloatRegister; 3],
         pub positions_in: [glam::Vec3; 3],
     }
 
@@ -45,7 +46,7 @@ pub mod cores {
         pub fn process<S, P, D>(&mut self, program: &S, color: &mut P, depth: &mut D)
         where
             S: shader::Shader,
-            P: memory::Raster<Item = u32>,
+            P: memory::Raster<Item = S::Pixel>,
             D: memory::Raster<Item = f32>,
         {
             let [hw, hh] = color.size().map(|dim| dim as f32 / 2.0);
@@ -64,8 +65,8 @@ pub mod cores {
             ];
             let interp = interp::BarycentricSystem::from_points(self.positions_in.map(|vertex| vertex.xy()));
 
-            for row in miny as i32..maxy as i32 {
-                for col in minx as i32..maxx as i32 {
+            for row in miny as i32..=maxy as i32 {
+                for col in minx as i32..=maxx as i32 {
                     let point = glam::vec2(col as f32, row as f32);
                     let lambdas = interp.sample_point(point);
                     if !interp.surrounds(lambdas) {
@@ -73,13 +74,16 @@ pub mod cores {
                     }
 
                     let pos = interp::weighted_sum(self.positions_in, lambdas.to_array());
+                    if &pos.z > depth.peek(col as usize, row as usize) {
+                        continue;
+                    }
+
                     let interp = interp::weighted_sum(
                         *interp::Vector::from(self.attribs_in.map(interp::Vector::from)),
                         lambdas.to_array(),
                     )
                     .to_array();
-                    let fragment =
-                        program.fragment(unsafe { &*(interp.as_ptr() as *const S::VertexAttribs) });
+                    let fragment = program.fragment(unsafe { &*(interp.as_ptr() as *const S::Interpolant) });
                     let pixel = program.pixel(&fragment);
 
                     debug_assert!(
@@ -89,8 +93,7 @@ pub mod cores {
                         row
                     );
 
-                    *color.get(col as usize, row as usize) =
-                        unsafe { *(&pixel as *const S::Pixel as *const u32) };
+                    *color.get(col as usize, row as usize) = pixel;
                     *depth.get(col as usize, row as usize) = pos.z;
                 }
             }
@@ -116,7 +119,7 @@ pub mod gpu {
     use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
     use crate::{
-        memory::{self, Raster, stack},
+        memory::{self, stack},
         vgpu::{
             self, cores,
             shader::{self},
@@ -154,12 +157,9 @@ pub mod gpu {
                 let core = &mut cores[i];
                 let data = &data[self.head..self.head + vsize * 3];
 
-                core.vertices_in[0][..vsize]
-                    .copy_from_slice(&data[self.head + vsize * 0..self.head + vsize * 1]);
-                core.vertices_in[1][..vsize]
-                    .copy_from_slice(&data[self.head + vsize * 1..self.head + vsize * 2]);
-                core.vertices_in[2][..vsize]
-                    .copy_from_slice(&data[self.head + vsize * 2..self.head + vsize * 3]);
+                core.vertices_in[0][..vsize].copy_from_slice(&data[vsize * 0..vsize * 1]);
+                core.vertices_in[1][..vsize].copy_from_slice(&data[vsize * 1..vsize * 2]);
+                core.vertices_in[2][..vsize].copy_from_slice(&data[vsize * 2..vsize * 3]);
 
                 self.head += vsize * 3;
             }
@@ -195,8 +195,8 @@ pub mod gpu {
 
     impl<P, D> Gpu<P, D>
     where
-        P: Default + Raster<Item = u32> + Send + Sync,
-        D: Default + Raster<Item = f32> + Send + Sync,
+        P: Default + Send + Sync,
+        D: Default + Send + Sync,
     {
         pub fn new(vcores: usize, rcores: usize) -> Self {
             Self {
@@ -211,6 +211,7 @@ pub mod gpu {
         }
 
         pub fn set_vattrib_ptr(&mut self, stride: usize) {
+            assert!(self.vao_layout.len() < self.vao_layout.capacity());
             self.vao_layout.push(VaoPointer { stride });
         }
 
@@ -233,6 +234,8 @@ pub mod gpu {
         pub fn cycle_raster_cores<S>(&mut self, program: &S)
         where
             S: shader::Shader + Send + Sync,
+            P: memory::Raster<Item = S::Pixel>,
+            D: memory::Raster<Item = f32>,
         {
             if vgpu::THREADED {
                 let color = &self.color;
@@ -259,25 +262,41 @@ pub mod shader {
     use crate::{memory, vgpu::gpu};
 
     pub trait Shader {
+        /// Vertex shader input
         type Vertex;
 
-        type VertexAttribs;
+        /// Attributes to be interpolated during rasterization
+        type Interpolant;
 
+        /// Fragment shader output
         type Fragment;
 
+        /// Pixel type on the screen buffer
         type Pixel;
 
-        fn vertex(&self, vertex: &Self::Vertex) -> (glam::Vec3, Self::VertexAttribs);
+        /// Vertex shader stage
+        ///
+        /// Returns an 'Interpolant' to be rasterized
+        /// It is required to assign a value to <position_out> in NDC coordinates
+        fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec3) -> Self::Interpolant;
 
-        fn fragment(&self, frag_vertex: &Self::VertexAttribs) -> Self::Fragment;
+        /// Fragment shader stage
+        ///
+        /// Returns an intermediate 'Fragment' without writing to any buffers
+        fn fragment(&self, frag_vertex_in: &Self::Interpolant) -> Self::Fragment;
 
-        fn pixel(&self, fragment: &Self::Fragment) -> Self::Pixel;
+        /// Converts 'Fragment' to buffer's 'Pixel' representation and writes to memeory
+        fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel;
 
-        /// !!! NO OVERRIDE !!!
+        /**
+        !!! NO OVERRIDE !!!
+
+        This method has a generalized implementation and shouldn't ever be touched
+        */
         fn render<P, D>(&self, target: &mut gpu::Gpu<P, D>)
         where
             Self: Sized + Send + Sync,
-            P: Default + memory::Raster<Item = u32> + Send + Sync,
+            P: Default + memory::Raster<Item = Self::Pixel> + Send + Sync,
             D: Default + memory::Raster<Item = f32> + Send + Sync,
         {
             debug_assert!(target.color.size() == target.depth.size(), "Buffer dimensions must match");
@@ -298,21 +317,15 @@ mod tests {
     struct TestingPipeline;
     impl shader::Shader for TestingPipeline {
         type Vertex = [f32; 6];
-
-        type VertexAttribs = [f32; 6];
-
+        type Interpolant = [f32; 6];
         type Fragment = [f32; 3];
-
         type Pixel = u32;
-
-        fn vertex(&self, _: &Self::Vertex) -> (glam::Vec3, Self::VertexAttribs) {
+        fn vertex(&self, _: &Self::Vertex, _: &mut glam::Vec3) -> Self::Interpolant {
             todo!()
         }
-
-        fn fragment(&self, _: &Self::VertexAttribs) -> Self::Fragment {
+        fn fragment(&self, _: &Self::Interpolant) -> Self::Fragment {
             todo!()
         }
-
         fn pixel(&self, _: &Self::Fragment) -> Self::Pixel {
             todo!()
         }
@@ -329,7 +342,7 @@ mod tests {
                 assert!(size_of_val(&*(v.as_ptr() as *const S::Pixel)) == size_of::<f32>());
                 assert!(size_of_val(&*(v.as_ptr() as *const S::Vertex)) == 6 * size_of::<f32>());
                 assert!(size_of_val(&*(v.as_ptr() as *const S::Fragment)) == 3 * size_of::<f32>());
-                assert!(size_of_val(&*(v.as_ptr() as *const S::VertexAttribs)) == 6 * size_of::<f32>());
+                assert!(size_of_val(&*(v.as_ptr() as *const S::Interpolant)) == 6 * size_of::<f32>());
             }
         }
 

@@ -10,22 +10,26 @@ pub struct BarycentricSystem {
 }
 
 impl BarycentricSystem {
+    #[inline(always)]
     pub fn from_points(points: [glam::Vec2; 3]) -> Self {
         let [a, b, c] = points;
         Self { a, b, c, ba: b - a, cb: c - b, ac: a - c }
     }
 
+    #[inline(always)]
     pub fn sample_point(&self, point: glam::Vec2) -> glam::Vec3 {
         let [ap, bp, cp] = [point - self.a, point - self.b, point - self.c];
         let [apb, bpc, cpa] = [self.ba.perp_dot(ap), self.cb.perp_dot(bp), self.ac.perp_dot(cp)];
         glam::vec3(bpc, cpa, apb) / (bpc + cpa + apb)
     }
 
+    #[inline(always)]
     pub fn surrounds(&self, lambdas: glam::Vec3) -> bool {
         lambdas.x >= 0.0 && lambdas.y >= 0.0 && lambdas.z >= 0.0
     }
 }
 
+#[inline(always)]
 pub fn weighted_sum<V, W, T, D>(values: V, weights: W) -> T
 where
     T: Default + ops::Add<T, Output = T> + ops::Mul<D, Output = T>,
@@ -48,6 +52,7 @@ impl<T, const N: usize> Vector<T, N>
 where
     T: Clone + Copy,
 {
+    #[inline(always)]
     pub fn to_array(self) -> [T; N] {
         self.items
     }
@@ -57,18 +62,21 @@ impl<T, const N: usize> Default for Vector<T, N>
 where
     T: Default + Clone + Copy,
 {
+    #[inline(always)]
     fn default() -> Self {
         Self { items: [T::default(); N] }
     }
 }
 
 impl<T, const N: usize> From<[T; N]> for Vector<T, N> {
+    #[inline(always)]
     fn from(items: [T; N]) -> Self {
         Self { items }
     }
 }
 
 impl<T, const N: usize> From<Vector<T, N>> for [T; N] {
+    #[inline(always)]
     fn from(value: Vector<T, N>) -> Self {
         value.items
     }
@@ -80,6 +88,7 @@ where
 {
     type Output = Self;
 
+    #[inline(always)]
     fn add(mut self, rhs: Self) -> Self::Output {
         (0..N).for_each(|i| {
             self.items[i] = self.items[i] + rhs.items[i];
@@ -95,6 +104,7 @@ where
 {
     type Output = Self;
 
+    #[inline(always)]
     fn mul(mut self, rhs: D) -> Self::Output {
         (0..N).for_each(|i| {
             self.items[i] = self.items[i] * rhs;
@@ -106,12 +116,14 @@ where
 impl<T, const N: usize> ops::Deref for Vector<T, N> {
     type Target = [T; N];
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.items
     }
 }
 
 impl<T, const N: usize> ops::DerefMut for Vector<T, N> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.items
     }
