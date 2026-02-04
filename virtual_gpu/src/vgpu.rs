@@ -3,7 +3,11 @@ const THREADED: bool = true;
 pub mod cores {
     use glam::Vec3Swizzles;
 
-    use crate::{interp, memory, vgpu::shader};
+    use crate::{
+        interp,
+        memory::{self, transmute},
+        vgpu::shader,
+    };
 
     pub type FloatRegister = [f32; 9];
 
@@ -12,6 +16,7 @@ pub mod cores {
         pub vertices_in: [FloatRegister; 3],
         pub attribs_out: [FloatRegister; 3],
         pub positions_out: [glam::Vec3; 3],
+        pub enabled: bool,
     }
 
     impl GeometryCore {
@@ -25,11 +30,15 @@ pub mod cores {
                 "Vertex attributes are too large for core buffers"
             );
 
+            if !self.enabled {
+                return;
+            }
+
             for i in 0..3 {
-                let vertex = unsafe { &*(self.vertices_in[i].as_ptr() as *const S::Vertex) };
+                let vertex = transmute::bit_interp::<&FloatRegister, &S::Vertex>(&&self.vertices_in[i]);
                 let mut pos = glam::Vec3::default();
                 let attrib = program.vertex(vertex, &mut pos);
-                let attrib = unsafe { *(&attrib as *const S::Interpolant as *const FloatRegister) };
+                let attrib = transmute::bit_interp::<S::Interpolant, FloatRegister>(&attrib);
                 self.attribs_out[i] = attrib;
                 self.positions_out[i] = pos;
             }
@@ -40,6 +49,7 @@ pub mod cores {
     pub struct RasterCore {
         pub attribs_in: [FloatRegister; 3],
         pub positions_in: [glam::Vec3; 3],
+        pub enabled: bool,
     }
 
     impl RasterCore {
@@ -49,6 +59,10 @@ pub mod cores {
             P: memory::Raster<Item = S::Pixel>,
             D: memory::Raster<Item = f32>,
         {
+            if !self.enabled {
+                return;
+            }
+
             let [hw, hh] = color.size().map(|dim| dim as f32 / 2.0);
             self.positions_in = self.positions_in.map(|mut vertex| {
                 vertex.x = vertex.x * hw + hw;
@@ -83,7 +97,8 @@ pub mod cores {
                         lambdas.to_array(),
                     )
                     .to_array();
-                    let fragment = program.fragment(unsafe { &*(interp.as_ptr() as *const S::Interpolant) });
+                    let fragment =
+                        program.fragment(transmute::bit_interp::<&FloatRegister, &S::Interpolant>(&&interp));
                     let pixel = program.pixel(&fragment);
 
                     debug_assert!(
@@ -150,16 +165,19 @@ pub mod gpu {
             #[allow(clippy::identity_op)]
             #[allow(clippy::erasing_op)]
             for i in 0..cores.len() {
+                let core = &mut cores[i];
+                core.enabled = false;
+
                 if data.len() < self.head + vsize * 3 {
                     break;
                 }
 
-                let core = &mut cores[i];
                 let data = &data[self.head..self.head + vsize * 3];
 
                 core.vertices_in[0][..vsize].copy_from_slice(&data[vsize * 0..vsize * 1]);
                 core.vertices_in[1][..vsize].copy_from_slice(&data[vsize * 1..vsize * 2]);
                 core.vertices_in[2][..vsize].copy_from_slice(&data[vsize * 2..vsize * 3]);
+                core.enabled = true;
 
                 self.head += vsize * 3;
             }
@@ -176,6 +194,7 @@ pub mod gpu {
             for i in 0..cores.len() {
                 cores[i].attribs_in = data[i].attribs_out;
                 cores[i].positions_in = data[i].positions_out;
+                cores[i].enabled = true;
             }
         }
     }

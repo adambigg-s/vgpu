@@ -8,7 +8,10 @@ mod memory;
 mod vgpu;
 
 #[rustfmt::skip]
-const TRIANGLE: [f32; 18] = [
+const TRIANGLE: [f32; 36] = [
+    -0.6, -0.4, 0.0, 1.0, 0.4, 0.0,
+    0.5, -0.6, 0.0, 0.0, 1.0, 0.4,
+    0.1, 0.5, 0.0, 0.4, 0.0, 1.0,
     -0.6, -0.4, 0.0, 1.0, 0.4, 0.0,
     0.5, -0.6, 0.0, 0.0, 1.0, 0.4,
     0.1, 0.5, 0.0, 0.4, 0.0, 1.0,
@@ -61,7 +64,7 @@ const SCALE: minifb::Scale = minifb::Scale::X4;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 
 fn main() {
-    let mut gpu = gpu::Gpu::new(4, 4);
+    let mut gpu = gpu::Gpu::new(1, 1);
     gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
 

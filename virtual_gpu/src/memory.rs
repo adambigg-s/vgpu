@@ -263,13 +263,28 @@ pub mod stack {
     }
 }
 
-#[allow(dead_code)]
-mod transmute {
+pub(crate) mod transmute {
+    /// Function is very unsafe
     #[inline(always)]
-    pub unsafe fn bit_transmute<T, D, const N: usize>(value: &T) -> [D; N]
+    pub fn bit_interp<T, D>(value: &T) -> D
     where
         D: Clone + Copy,
     {
+        debug_assert!(size_of::<D>() != 0 && size_of::<T>() != 0);
+        unsafe { *(value as *const T as *const D) }
+    }
+
+    /// Function is very unsafe
+    ///
+    /// Acts in a similar manner to std::mem::transmute(), however there is
+    /// no requirement have equal sized types
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub unsafe fn bit_interp_contig<T, D, const N: usize>(value: &T) -> [D; N]
+    where
+        D: Clone + Copy,
+    {
+        debug_assert!(size_of::<D>() != 0 && size_of::<T>() != 0);
         unsafe { *(value as *const T as *const [D; N]) }
     }
 }
@@ -280,6 +295,7 @@ mod tests {
 
     #[test]
     #[rustfmt::skip]
+    #[allow(unused)]
     fn bitwise_transmute() {
         #[repr(C, packed)]
         struct FooBar {
@@ -290,10 +306,16 @@ mod tests {
             _v3: glam::vec3(1.0, 2.0, 3.0),
             _v2: glam::vec2(4.0, 5.0),
         };
-        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 5>(&foobar) } == [1.0, 2.0, 3.0, 4.0, 5.0]);
-        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 4>(&foobar) } == [1.0, 2.0, 3.0, 4.0]);
-        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 3>(&foobar) } == [1.0, 2.0, 3.0]);
-        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 2>(&foobar) } == [1.0, 2.0]);
-        assert!(unsafe { transmute::bit_transmute::<FooBar, f32, 1>(&foobar) } == [1.0]);
+        assert!(unsafe { transmute::bit_interp_contig::<FooBar, f32, 5>(&foobar) } == [1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert!(unsafe { transmute::bit_interp_contig::<FooBar, f32, 4>(&foobar) } == [1.0, 2.0, 3.0, 4.0]);
+        assert!(unsafe { transmute::bit_interp_contig::<FooBar, f32, 3>(&foobar) } == [1.0, 2.0, 3.0]);
+        assert!(unsafe { transmute::bit_interp_contig::<FooBar, f32, 2>(&foobar) } == [1.0, 2.0]);
+        assert!(unsafe { transmute::bit_interp_contig::<FooBar, f32, 1>(&foobar) } == [1.0]);
+    }
+
+    #[test]
+    fn ub_transmute() {
+        assert!(transmute::bit_interp::<i32, bool>(&1));
+        assert!(!transmute::bit_interp::<i32, bool>(&2));
     }
 }
