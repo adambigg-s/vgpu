@@ -77,8 +77,8 @@ pub mod cores {
             [minx, miny, maxx, maxy] = [
                 minx.max(0.0),
                 miny.max(0.0),
-                maxx.min((color.size()[0] - 1) as f32),
-                maxy.min((color.size()[1] - 1) as f32),
+                maxx.min((color.width() - 1) as f32),
+                maxy.min((color.height() - 1) as f32),
             ];
             let interp = interp::BarycentricSystem::from_points(self.positions_in.map(|vertex| vertex.xy()));
 
@@ -90,12 +90,14 @@ pub mod cores {
                         continue;
                     }
 
-                    let pos = interp::weighted_sum(self.positions_in, lambdas.to_array());
-                    if &pos.z > depth.peek(col as usize, row as usize) {
+                    let mut pos = interp::weighted_sum(self.positions_in, lambdas.to_array());
+                    let distance = pos.z;
+                    if &distance < depth.peek(col as usize, row as usize) {
                         continue;
                     }
 
-                    let _inv_depth = pos.w.recip();
+                    let inv_depth = distance.recip();
+                    pos *= inv_depth;
 
                     let interp = interp::weighted_sum(
                         *interp::Vector::from(self.attribs_in.map(interp::Vector::from)),
@@ -113,7 +115,7 @@ pub mod cores {
                     );
 
                     *color.get(col as usize, row as usize) = pixel;
-                    *depth.get(col as usize, row as usize) = pos.z;
+                    *depth.get(col as usize, row as usize) = distance;
                 }
             }
         }
@@ -242,7 +244,10 @@ pub mod gpu {
         }
 
         pub fn set_vattrib_ptr(&mut self, stride: usize) {
-            assert!(self.vao_layout.len() < self.vao_layout.capacity());
+            if self.vao_layout.len() > 0 {
+                self.vao_layout.pop();
+            }
+            debug_assert!(self.vao_layout.len() < self.vao_layout.capacity());
             self.vao_layout.push(VaoPointer { stride });
         }
 

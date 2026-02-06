@@ -1,5 +1,3 @@
-use std::env;
-
 use crate::vgpu::{
     gpu,
     shader::{self, Shader},
@@ -56,9 +54,9 @@ impl shader::Shader for Pipeline {
 
     #[inline]
     fn pixel(&self, fragment: &Self::Fragment) -> Self::Pixel {
-        let red = (fragment[0] * 255.9999) as u8 as u32;
-        let gre = (fragment[1] * 255.9999) as u8 as u32;
-        let blu = (fragment[2] * 255.9999) as u8 as u32;
+        let red = (fragment.x * 255.9999) as u8 as u32;
+        let gre = (fragment.y * 255.9999) as u8 as u32;
+        let blu = (fragment.z * 255.9999) as u8 as u32;
         0xffu32 << 24 | red << 16 | gre << 8 | blu
     }
 }
@@ -69,17 +67,12 @@ const SCALE: minifb::Scale = minifb::Scale::X4;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 
 fn main() {
-    unsafe {
-        env::set_var("RUST_BACKTRACE", "full");
-    }
     let mut gpu = gpu::Gpu::new(1, 1);
     gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
 
     gpu.set_vattrib_ptr(6);
     gpu.bind_data(&TRIANGLE.to_vec());
-
-    let mut model_mat = glam::Mat4::from_translation(glam::vec3(0.0, 0.0, 4.0));
 
     let mut window = minifb::Window::new(
         "Virtual GPU",
@@ -91,17 +84,16 @@ fn main() {
     window.set_target_fps(999);
 
     let model = model::Model::new("../vendor/teapot.obj").unwrap();
+    let mut model_mat = glam::Mat4::from_translation(glam::vec3(0.0, 0.0, 4.0));
 
-    let mut time = std::time::Instant::now();
     while !window.is_key_down(minifb::Key::Escape) {
         gpu.color.fill(SFILL);
-        gpu.depth.fill(f32::MAX);
+        gpu.depth.fill(f32::MIN);
         let pipeline = Pipeline {
             mvp: glam::Mat4::perspective_rh_gl(90.0f32, SWIDTH as f32 / SHEIGHT as f32, 0.01, 100.0)
                 * glam::Mat4::IDENTITY
                 * model_mat,
         };
-        // pipeline.render(&mut gpu);
 
         for mesh in &model.meshes {
             let mut floats = Vec::new();
@@ -112,15 +104,23 @@ fn main() {
                 }
             });
             gpu.bind_data(&floats);
-            // gpu.set_vattrib_ptr(6);
+            gpu.set_vattrib_ptr(6);
             pipeline.render(&mut gpu);
         }
 
-        model_mat *= glam::Mat4::from_rotation_y(0.003);
-        model_mat *= glam::Mat4::from_rotation_z(0.001);
+        if window.is_key_down(minifb::Key::A) {
+            model_mat *= glam::Mat4::from_rotation_y(0.003);
+        }
+        if window.is_key_down(minifb::Key::D) {
+            model_mat *= glam::Mat4::from_rotation_y(-0.003);
+        }
+        if window.is_key_down(minifb::Key::W) {
+            model_mat *= glam::Mat4::from_rotation_z(0.001);
+        }
+        if window.is_key_down(minifb::Key::S) {
+            model_mat *= glam::Mat4::from_rotation_z(-0.001);
+        }
 
         window.update_with_buffer(&gpu.color, gpu.color.size()[0], gpu.color.size()[1]).unwrap();
-        println!("fps: {:.2}", time.elapsed().as_secs_f32().recip());
-        time = std::time::Instant::now();
     }
 }

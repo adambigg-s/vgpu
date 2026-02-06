@@ -9,5 +9,6 @@ An educational software GPU emulator in Rust
 - Make a robust transmutation pipeline to keep the user-exposed API completely boilerplate free
 
 ![alt text](demo/interp.png)
+![alt text](demo/teapot.png)
 
 
