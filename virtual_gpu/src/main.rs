@@ -1,3 +1,5 @@
+use std::env;
+
 use crate::vgpu::{
     gpu,
     shader::{self, Shader},
@@ -5,30 +7,33 @@ use crate::vgpu::{
 
 mod interp;
 mod memory;
+mod model;
 mod vgpu;
 
 #[rustfmt::skip]
-const TRIANGLE: [f32; 36] = [
-    -0.6, -0.4, 0.0, 1.0, 0.4, 0.0,
-    0.5, -0.6, 0.0, 0.0, 1.0, 0.4,
-    0.1, 0.5, 0.0, 0.4, 0.0, 1.0,
-    -0.6, -0.4, 0.0, 1.0, 0.4, 0.0,
-    0.5, -0.6, 0.0, 0.0, 1.0, 0.4,
-    0.1, 0.5, 0.0, 0.4, 0.0, 1.0,
+const TRIANGLE: [f32; 18] = [
+    -0.6, -0.4, 3.0, 1.0, 0.4, 0.0,
+    0.5, -0.6, 1.0, 0.0, 1.0, 0.4,
+    0.1, 0.5, 0.2, 0.4, 0.0, 1.0,
 ];
 
 #[repr(C, packed)]
-struct Vertex {
+#[derive(Clone, Copy)]
+pub struct Vertex {
     pos: glam::Vec3,
     col: glam::Vec3,
 }
 
 #[repr(C, packed)]
-struct Fragment {
+pub struct Fragment {
     col: glam::Vec3,
 }
 
-struct Pipeline;
+#[repr(C, packed)]
+pub struct Pipeline {
+    mvp: glam::Mat4,
+}
+
 impl shader::Shader for Pipeline {
     type Vertex = Vertex;
 
@@ -39,8 +44,8 @@ impl shader::Shader for Pipeline {
     type Pixel = u32;
 
     #[inline]
-    fn vertex(&self, vertex: &Self::Vertex, pos_out: &mut glam::Vec3) -> Self::Interpolant {
-        *pos_out = vertex.pos;
+    fn vertex(&self, vertex: &Self::Vertex, pos_out: &mut glam::Vec4) -> Self::Interpolant {
+        *pos_out = self.mvp * vertex.pos.to_homogeneous();
         Fragment { col: vertex.col }
     }
 
@@ -64,13 +69,17 @@ const SCALE: minifb::Scale = minifb::Scale::X4;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 
 fn main() {
+    unsafe {
+        env::set_var("RUST_BACKTRACE", "full");
+    }
     let mut gpu = gpu::Gpu::new(1, 1);
     gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
 
-    let pipeline = Pipeline;
     gpu.set_vattrib_ptr(6);
     gpu.bind_data(&TRIANGLE.to_vec());
+
+    let mut model_mat = glam::Mat4::from_translation(glam::vec3(0.0, 0.0, 4.0));
 
     let mut window = minifb::Window::new(
         "Virtual GPU",
@@ -81,11 +90,37 @@ fn main() {
     .unwrap();
     window.set_target_fps(999);
 
+    let model = model::Model::new("../vendor/teapot.obj").unwrap();
+
+    let mut time = std::time::Instant::now();
     while !window.is_key_down(minifb::Key::Escape) {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::MAX);
-        pipeline.render(&mut gpu);
+        let pipeline = Pipeline {
+            mvp: glam::Mat4::perspective_rh_gl(90.0f32, SWIDTH as f32 / SHEIGHT as f32, 0.01, 100.0)
+                * glam::Mat4::IDENTITY
+                * model_mat,
+        };
+        // pipeline.render(&mut gpu);
+
+        for mesh in &model.meshes {
+            let mut floats = Vec::new();
+            mesh.vertices().for_each(|vertex| {
+                let as_floats = memory::transmute::bit_interp::<Vertex, [f32; 6]>(&vertex);
+                for float in as_floats {
+                    floats.push(float);
+                }
+            });
+            gpu.bind_data(&floats);
+            // gpu.set_vattrib_ptr(6);
+            pipeline.render(&mut gpu);
+        }
+
+        model_mat *= glam::Mat4::from_rotation_y(0.003);
+        model_mat *= glam::Mat4::from_rotation_z(0.001);
 
         window.update_with_buffer(&gpu.color, gpu.color.size()[0], gpu.color.size()[1]).unwrap();
+        println!("fps: {:.2}", time.elapsed().as_secs_f32().recip());
+        time = std::time::Instant::now();
     }
 }

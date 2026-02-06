@@ -1,7 +1,7 @@
 const THREADED: bool = true;
 
 pub mod cores {
-    use glam::Vec3Swizzles;
+    use glam::Vec4Swizzles;
 
     use crate::{
         interp,
@@ -9,20 +9,21 @@ pub mod cores {
         vgpu::shader,
     };
 
-    pub type FloatRegister = [f32; 9];
+    type FloatRegister = interp::Vector<f32, 12>;
 
     #[derive(Default, Debug)]
     pub struct GeometryCore {
         pub vertices_in: [FloatRegister; 3],
         pub attribs_out: [FloatRegister; 3],
-        pub positions_out: [glam::Vec3; 3],
+        pub positions_out: [glam::Vec4; 3],
         pub enabled: bool,
     }
 
     impl GeometryCore {
-        pub fn process<S>(&mut self, program: &S)
+        pub fn process<S, P>(&mut self, program: &S, viewport: &P)
         where
             S: shader::Shader,
+            P: memory::Raster<Item = S::Pixel>,
         {
             debug_assert!(
                 size_of::<S::Vertex>() < size_of::<FloatRegister>()
@@ -36,19 +37,28 @@ pub mod cores {
 
             for i in 0..3 {
                 let vertex = transmute::bit_interp::<&FloatRegister, &S::Vertex>(&&self.vertices_in[i]);
-                let mut pos = glam::Vec3::default();
+                let mut pos = glam::Vec4::default();
                 let attrib = program.vertex(vertex, &mut pos);
                 let attrib = transmute::bit_interp::<S::Interpolant, FloatRegister>(&attrib);
                 self.attribs_out[i] = attrib;
                 self.positions_out[i] = pos;
             }
+            let [hw, hh] = viewport.size().map(|dim| dim as f32 / 2.0);
+            self.positions_out = self.positions_out.map(|mut vertex| {
+                let inv_depth = vertex.w.recip();
+                vertex *= inv_depth;
+                vertex.w = inv_depth;
+                vertex.x = vertex.x * hw + hw;
+                vertex.y = -vertex.y * hh + hh;
+                vertex
+            });
         }
     }
 
     #[derive(Default, Debug)]
     pub struct RasterCore {
         pub attribs_in: [FloatRegister; 3],
-        pub positions_in: [glam::Vec3; 3],
+        pub positions_in: [glam::Vec4; 3],
         pub enabled: bool,
     }
 
@@ -63,25 +73,18 @@ pub mod cores {
                 return;
             }
 
-            let [hw, hh] = color.size().map(|dim| dim as f32 / 2.0);
-            self.positions_in = self.positions_in.map(|mut vertex| {
-                vertex.x = vertex.x * hw + hw;
-                vertex.y = -vertex.y * hh + hh;
-                vertex
-            });
-
             let [mut minx, mut miny, mut maxx, mut maxy] = self.bounding_box();
             [minx, miny, maxx, maxy] = [
                 minx.max(0.0),
                 miny.max(0.0),
-                maxx.min(color.size()[0] as f32),
-                maxy.min(color.size()[1] as f32),
+                maxx.min((color.size()[0] - 1) as f32),
+                maxy.min((color.size()[1] - 1) as f32),
             ];
             let interp = interp::BarycentricSystem::from_points(self.positions_in.map(|vertex| vertex.xy()));
 
             for row in miny as i32..=maxy as i32 {
                 for col in minx as i32..=maxx as i32 {
-                    let point = glam::vec2(col as f32, row as f32);
+                    let point = glam::vec2(col as f32 + 0.5, row as f32 + 0.5);
                     let lambdas = interp.sample_point(point);
                     if !interp.surrounds(lambdas) {
                         continue;
@@ -92,11 +95,12 @@ pub mod cores {
                         continue;
                     }
 
+                    let _inv_depth = pos.w.recip();
+
                     let interp = interp::weighted_sum(
                         *interp::Vector::from(self.attribs_in.map(interp::Vector::from)),
                         lambdas.to_array(),
-                    )
-                    .to_array();
+                    );
                     let fragment =
                         program.fragment(transmute::bit_interp::<&FloatRegister, &S::Interpolant>(&&interp));
                     let pixel = program.pixel(&fragment);
@@ -152,13 +156,20 @@ pub mod gpu {
     }
 
     impl Scheduler {
+        pub fn reset(&mut self) {
+            *self = Default::default()
+        }
+
+        pub fn incomplete(&self, data: &memory::Array<f32>) -> bool {
+            self.head < data.len()
+        }
+
         pub fn load_geometry_cores(
             &mut self,
             cores: &mut memory::Array<cores::GeometryCore>,
             data: &memory::Array<f32>,
             ptr: &stack::Vec<VaoPointer, 1>,
         ) {
-            self.head = 0;
             let vsize = ptr.into_iter().map(|ptr| ptr.stride).max().unwrap_or(3);
             debug_assert!(vsize > 0);
 
@@ -173,7 +184,6 @@ pub mod gpu {
                 }
 
                 let data = &data[self.head..self.head + vsize * 3];
-
                 core.vertices_in[0][..vsize].copy_from_slice(&data[vsize * 0..vsize * 1]);
                 core.vertices_in[1][..vsize].copy_from_slice(&data[vsize * 1..vsize * 2]);
                 core.vertices_in[2][..vsize].copy_from_slice(&data[vsize * 2..vsize * 3]);
@@ -181,8 +191,6 @@ pub mod gpu {
 
                 self.head += vsize * 3;
             }
-
-            debug_assert!(self.head == data.len());
         }
 
         pub fn load_raster_cores(
@@ -192,6 +200,10 @@ pub mod gpu {
         ) {
             debug_assert!(cores.len() == data.len());
             for i in 0..cores.len() {
+                cores[i].enabled = false;
+                if !data[i].enabled {
+                    continue;
+                }
                 cores[i].attribs_in = data[i].attribs_out;
                 cores[i].positions_in = data[i].positions_out;
                 cores[i].enabled = true;
@@ -237,15 +249,16 @@ pub mod gpu {
         pub fn cycle_vertex_cores<S>(&mut self, program: &S)
         where
             S: shader::Shader + Send + Sync,
+            P: memory::Raster<Item = S::Pixel>,
         {
             if vgpu::THREADED {
                 self.vertex_cores.par_iter_mut().for_each(|core| {
-                    core.process(program);
+                    core.process(program, &self.color);
                 });
             }
             else {
                 self.vertex_cores.iter_mut().for_each(|core| {
-                    core.process(program);
+                    core.process(program, &self.color);
                 });
             }
         }
@@ -278,7 +291,10 @@ pub mod gpu {
 }
 
 pub mod shader {
-    use crate::{memory, vgpu::gpu};
+    use crate::{
+        memory,
+        vgpu::gpu::{self},
+    };
 
     pub trait Shader {
         /// Vertex shader input
@@ -297,7 +313,7 @@ pub mod shader {
         ///
         /// Returns an 'Interpolant' to be rasterized
         /// It is required to assign a value to <position_out> in NDC coordinates
-        fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec3) -> Self::Interpolant;
+        fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec4) -> Self::Interpolant;
 
         /// Fragment shader stage
         ///
@@ -319,12 +335,21 @@ pub mod shader {
             D: Default + memory::Raster<Item = f32> + Send + Sync,
         {
             debug_assert!(target.color.size() == target.depth.size(), "Buffer dimensions must match");
-            target
-                .scheduler
-                .load_geometry_cores(&mut target.vertex_cores, &target.vao, &target.vao_layout);
-            target.cycle_vertex_cores(self);
-            target.scheduler.load_raster_cores(&mut target.raster_cores, &target.vertex_cores);
-            target.cycle_raster_cores(self);
+            target.scheduler.reset();
+            loop {
+                target.scheduler.load_geometry_cores(
+                    &mut target.vertex_cores,
+                    &target.vao,
+                    &target.vao_layout,
+                );
+                target.cycle_vertex_cores(self);
+                target.scheduler.load_raster_cores(&mut target.raster_cores, &target.vertex_cores);
+                target.cycle_raster_cores(self);
+
+                if !target.scheduler.incomplete(&target.vao) {
+                    break;
+                }
+            }
         }
     }
 }
@@ -339,7 +364,7 @@ mod tests {
         type Interpolant = [f32; 6];
         type Fragment = [f32; 3];
         type Pixel = u32;
-        fn vertex(&self, _: &Self::Vertex, _: &mut glam::Vec3) -> Self::Interpolant {
+        fn vertex(&self, _: &Self::Vertex, _: &mut glam::Vec4) -> Self::Interpolant {
             todo!()
         }
         fn fragment(&self, _: &Self::Interpolant) -> Self::Fragment {
