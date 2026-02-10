@@ -186,6 +186,10 @@ pub mod stack {
             N
         }
 
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+
         pub fn push(&mut self, item: T) {
             debug_assert!(self.len != N);
             self.items[self.len] = mem::MaybeUninit::new(item);
@@ -277,6 +281,10 @@ pub(crate) mod transmute {
     ///
     /// Acts in a similar manner to std::mem::transmute(), however there is
     /// no requirement have equal sized types
+    ///
+    /// # Safety
+    /// Attempting to read past size_of::<T>() is UB. However, the data is
+    /// always copied so it should never segv
     #[allow(dead_code)]
     #[inline(always)]
     pub unsafe fn bit_interp_contig<T, D, const N: usize>(value: &T) -> [D; N]

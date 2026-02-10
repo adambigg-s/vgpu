@@ -244,7 +244,7 @@ pub mod gpu {
         }
 
         pub fn set_vattrib_ptr(&mut self, stride: usize) {
-            if self.vao_layout.len() > 0 {
+            if !self.vao_layout.is_empty() {
                 self.vao_layout.pop();
             }
             debug_assert!(self.vao_layout.len() < self.vao_layout.capacity());
@@ -361,7 +361,10 @@ pub mod shader {
 
 #[cfg(test)]
 mod tests {
-    use crate::vgpu::shader;
+    use crate::{
+        memory::transmute,
+        vgpu::shader,
+    };
 
     struct TestingPipeline;
     impl shader::Shader for TestingPipeline {
@@ -397,5 +400,20 @@ mod tests {
 
         let shader = TestingPipeline;
         generic_pipe_fn(shader, &[Default::default(); 32]);
+    }
+
+    #[test]
+    fn controlled_ub() {
+        fn generic_pipe_fn<S>(_: S, val: &[f32; 8])
+        where
+            S: shader::Shader,
+        {
+            let shader_in = transmute::bit_interp::<&[f32; 8], &S::Vertex>(&val);
+            let shader_out = transmute::bit_interp::<&S::Vertex, &S::Fragment>(&shader_in);
+            let val = transmute::bit_interp::<&S::Fragment, &[f32; 3]>(&shader_out);
+            assert!(val == &[1.0, 2.0, 3.0]);
+        }
+        let shader = TestingPipeline;
+        generic_pipe_fn(shader, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
     }
 }
