@@ -1,11 +1,10 @@
-use virtual_gpu::shader::Shader;
 use virtual_gpu::{gpu, memory, shader};
 
 mod utils;
 
-const SWIDTH: usize = 2;
-const SHEIGHT: usize = 2;
-const SSCALE: minifb::Scale = minifb::Scale::X8;
+const SWIDTH: usize = 256;
+const SHEIGHT: usize = 256;
+const SSCALE: minifb::Scale = minifb::Scale::X2;
 
 #[rustfmt::skip]
 const TRIANGLE: [f32; 18] = [
@@ -65,7 +64,9 @@ fn main() {
         minifb::WindowOptions { scale: SSCALE, ..Default::default() },
     )
     .unwrap();
+    screen.set_target_fps(999);
 
+    let mut starting = std::time::Instant::now();
     loop {
         gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
@@ -73,6 +74,9 @@ fn main() {
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
+
+        println!("fps: {:.2}", starting.elapsed().as_secs_f64().recip());
+        starting = std::time::Instant::now();
     }
 
     if SWIDTH * SHEIGHT < 1000 {
