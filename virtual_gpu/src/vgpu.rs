@@ -1,229 +1,184 @@
-const THREADED: bool = true;
+pub const REGISTER_SIZE: usize = 12;
+pub const VAO_SIZE: usize = 1;
+pub const TILE_SIZE: usize = 64;
 
 pub mod cores {
-    use glam::Vec4Swizzles;
+    use std::sync::atomic;
 
     use crate::{
-        interp,
+        gpu, interp,
         memory::{self, transmute},
-        vgpu::shader,
+        shader,
+        vgpu::{self, aabb},
     };
 
-    type FloatRegister = interp::Vector<f32, 12>;
+    pub type FloatRegister = interp::Vector<f32, { vgpu::REGISTER_SIZE }>;
 
     #[derive(Default, Debug)]
-    pub struct GeometryCore {
-        pub vertices_in: [FloatRegister; 3],
-        pub attribs_out: [FloatRegister; 3],
-        pub positions_out: [glam::Vec4; 3],
-        pub enabled: bool,
-    }
+    pub struct VertexCore {}
 
-    impl GeometryCore {
-        pub fn process<S, P>(&mut self, program: &S, viewport: &P)
-        where
+    impl VertexCore {
+        pub fn work<S>(
+            &self,
+            queue: &mut memory::Array<gpu::ProcessedVertex>,
+            scheduler: &gpu::Scheduler,
+            vao: &memory::Array<f32>,
+            layout: &gpu::VaoPointer,
+            program: &S,
+        ) where
             S: shader::Shader,
-            P: memory::Raster<Item = S::Pixel>,
         {
             debug_assert!(
                 size_of::<S::Vertex>() < size_of::<FloatRegister>()
                     && size_of::<S::Interpolant>() < size_of::<FloatRegister>(),
                 "Vertex attributes are too large for core buffers"
             );
+            loop {
+                let index = scheduler.head.fetch_add(1, atomic::Ordering::Relaxed);
+                let head = index * layout.stride;
+                let tail = head + layout.stride;
+                if tail > vao.len() {
+                    break;
+                }
 
-            if !self.enabled {
-                return;
-            }
+                let data = &vao[head..tail];
+                let vertex = transmute::bit_interp::<&[f32], &S::Vertex>(&data);
 
-            for i in 0..3 {
-                let vertex = transmute::bit_interp::<&FloatRegister, &S::Vertex>(&&self.vertices_in[i]);
-                let mut pos = glam::Vec4::default();
-                let attrib = program.vertex(vertex, &mut pos);
-                let attrib = transmute::bit_interp::<S::Interpolant, FloatRegister>(&attrib);
-                self.attribs_out[i] = attrib;
-                self.positions_out[i] = pos;
+                let mut position = glam::Vec4::default();
+                let vs = program.vertex(vertex, &mut position);
+                let attributes = transmute::bit_interp::<S::Interpolant, FloatRegister>(&vs);
+
+                queue[index] = gpu::ProcessedVertex { attribs: attributes, pos: position }
             }
-            let [hw, hh] = viewport.size().map(|dim| dim as f32 / 2.0);
-            self.positions_out = self.positions_out.map(|mut vertex| {
-                let inv_depth = vertex.w.recip();
-                vertex *= inv_depth;
-                vertex.w = inv_depth;
-                vertex.x = vertex.x * hw + hw;
-                vertex.y = -vertex.y * hh + hh;
-                vertex
-            });
         }
     }
 
     #[derive(Default, Debug)]
     pub struct RasterCore {
-        pub attribs_in: [FloatRegister; 3],
-        pub positions_in: [glam::Vec4; 3],
-        pub enabled: bool,
+        tile: Tile,
     }
 
-    impl RasterCore {
-        pub fn process<S, P, D>(&mut self, program: &S, color: &mut P, depth: &mut D)
-        where
-            S: shader::Shader,
-            P: memory::Raster<Item = S::Pixel>,
-            D: memory::Raster<Item = f32>,
-        {
-            if !self.enabled {
-                return;
-            }
+    pub type Tile = aabb::AaBb<f32, 2>;
+}
 
-            let [mut minx, mut miny, mut maxx, mut maxy] = self.bounding_box();
-            [minx, miny, maxx, maxy] = [
-                minx.max(0.0),
-                miny.max(0.0),
-                maxx.min((color.width() - 1) as f32),
-                maxy.min((color.height() - 1) as f32),
-            ];
-            let interp = interp::BarycentricSystem::from_points(self.positions_in.map(|vertex| vertex.xy()));
+pub mod aabb {
+    use std::cmp;
 
-            for row in miny as i32..=maxy as i32 {
-                for col in minx as i32..=maxx as i32 {
-                    let point = glam::vec2(col as f32 + 0.5, row as f32 + 0.5);
-                    let lambdas = interp.sample_point(point);
-                    if !interp.surrounds(lambdas) {
-                        continue;
-                    }
+    #[derive(Debug)]
+    pub struct AaBb<T, const N: usize> {
+        low: [T; N],
+        high: [T; N],
+    }
 
-                    let mut pos = interp::weighted_sum(self.positions_in, lambdas.to_array());
-                    let distance = pos.z;
-                    if &distance < depth.peek(col as usize, row as usize) {
-                        continue;
-                    }
-
-                    let inv_depth = distance.recip();
-                    pos *= inv_depth;
-
-                    let interp = interp::weighted_sum(
-                        *interp::Vector::from(self.attribs_in.map(interp::Vector::from)),
-                        lambdas.to_array(),
-                    );
-                    let fragment =
-                        program.fragment(transmute::bit_interp::<&FloatRegister, &S::Interpolant>(&&interp));
-                    let pixel = program.pixel(&fragment);
-
-                    debug_assert!(
-                        color.width() > col as usize && color.height() > row as usize,
-                        "indices: {}, {}",
-                        col,
-                        row
-                    );
-
-                    *color.get(col as usize, row as usize) = pixel;
-                    *depth.get(col as usize, row as usize) = distance;
-                }
-            }
+    impl<T, const N: usize> AaBb<T, N> {
+        pub fn new(low: [T; N], high: [T; N]) -> Self {
+            Self { low, high }
         }
 
-        fn bounding_box(&self) -> [f32; 4] {
-            let [mut minx, mut miny] = [f32::INFINITY, f32::INFINITY];
-            let [mut maxx, mut maxy] = [f32::NEG_INFINITY, f32::NEG_INFINITY];
-            self.positions_in.iter().for_each(|vertex| {
-                minx = minx.min(vertex.x);
-                miny = miny.min(vertex.y);
-                maxx = maxx.max(vertex.x);
-                maxy = maxy.max(vertex.y);
-            });
-            [minx, miny, maxx, maxy]
+        pub fn overlaps(&self, other: &Self) -> bool
+        where
+            T: cmp::PartialOrd,
+        {
+            (0..N).all(|dim| self.low[dim] <= other.high[dim] && self.high[dim] >= other.low[dim])
+        }
+    }
+
+    impl<T, const N: usize> Default for AaBb<T, N>
+    where
+        T: Default + Clone + Copy,
+    {
+        fn default() -> Self {
+            Self::new([T::default(); N], [T::default(); N])
         }
     }
 }
 
 pub mod gpu {
-    use std::clone;
-
-    use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+    use std::{clone, sync::atomic, thread};
 
     use crate::{
         memory::{self, stack},
-        vgpu::{
-            self, cores,
-            shader::{self},
-        },
+        shader,
+        vgpu::{self, cores},
     };
 
     #[derive(Default, Debug)]
     pub struct VaoPointer {
-        stride: usize,
+        pub stride: usize,
     }
 
     #[derive(Default, Debug)]
     pub struct Scheduler {
-        head: usize,
+        pub head: atomic::AtomicUsize,
     }
 
     impl Scheduler {
-        pub fn reset(&mut self) {
-            *self = Default::default()
+        pub fn reset(&self) {
+            self.head.store(Default::default(), atomic::Ordering::Relaxed);
         }
 
         pub fn incomplete(&self, data: &memory::Array<f32>) -> bool {
-            self.head < data.len()
+            self.head.load(atomic::Ordering::Relaxed) < data.len()
         }
 
-        pub fn load_geometry_cores(
-            &mut self,
-            cores: &mut memory::Array<cores::GeometryCore>,
-            data: &memory::Array<f32>,
-            ptr: &stack::Vec<VaoPointer, 1>,
-        ) {
-            let vsize = ptr.into_iter().map(|ptr| ptr.stride).max().unwrap_or(3);
-            debug_assert!(vsize > 0);
-
-            #[allow(clippy::identity_op)]
-            #[allow(clippy::erasing_op)]
-            for i in 0..cores.len() {
-                let core = &mut cores[i];
-                core.enabled = false;
-
-                if data.len() < self.head + vsize * 3 {
-                    break;
+        pub fn vertex_stage<S>(
+            &self,
+            program: &S,
+            cores: &mut memory::Array<cores::VertexCore>,
+            queue: &mut memory::Array<ProcessedVertex>,
+            vao: &memory::Array<f32>,
+            layout: &VaoPointer,
+        ) where
+            S: shader::Shader + Send + Sync,
+        {
+            *queue = memory::Array::new([vao.len() / layout.stride]);
+            self.reset();
+            #[allow(invalid_reference_casting)]
+            thread::scope(|scope| {
+                for core in cores.iter() {
+                    scope.spawn(|| unsafe {
+                        let queue = queue as *const memory::Array<ProcessedVertex>
+                            as *mut memory::Array<ProcessedVertex>;
+                        core.work(&mut *queue, self, vao, layout, program);
+                    });
                 }
-
-                let data = &data[self.head..self.head + vsize * 3];
-                core.vertices_in[0][..vsize].copy_from_slice(&data[vsize * 0..vsize * 1]);
-                core.vertices_in[1][..vsize].copy_from_slice(&data[vsize * 1..vsize * 2]);
-                core.vertices_in[2][..vsize].copy_from_slice(&data[vsize * 2..vsize * 3]);
-                core.enabled = true;
-
-                self.head += vsize * 3;
-            }
+            })
         }
 
-        pub fn load_raster_cores(
-            &mut self,
+        pub fn raster_stage<S, P, D>(
+            &self,
+            program: &S,
             cores: &mut memory::Array<cores::RasterCore>,
-            data: &memory::Array<cores::GeometryCore>,
-        ) {
-            debug_assert!(cores.len() == data.len());
-            for i in 0..cores.len() {
-                cores[i].enabled = false;
-                if !data[i].enabled {
-                    continue;
-                }
-                cores[i].attribs_in = data[i].attribs_out;
-                cores[i].positions_in = data[i].positions_out;
-                cores[i].enabled = true;
-            }
+            color: &mut P,
+            depth: &mut D,
+            queue: &memory::Array<ProcessedVertex>,
+        ) where
+            S: shader::Shader + Send + Sync,
+            P: Default + memory::Raster<Item = S::Pixel> + Send + Sync,
+            D: Default + memory::Raster<Item = f32> + Send + Sync,
+        {
         }
     }
 
     #[derive(Default, Debug)]
+    pub struct ProcessedVertex {
+        pub attribs: cores::FloatRegister,
+        pub pos: glam::Vec4,
+    }
+
+    #[derive(Default, Debug)]
     pub struct Gpu<P, D> {
-        pub vertex_cores: memory::Array<cores::GeometryCore>,
+        pub vertex_cores: memory::Array<cores::VertexCore>,
         pub raster_cores: memory::Array<cores::RasterCore>,
-        pub scheduler: Scheduler,
+        pub vscheduler: Scheduler,
+        pub rscheduler: Scheduler,
+
+        pub vao_layout: stack::Vec<VaoPointer, { vgpu::VAO_SIZE }>,
+        pub vao_raw: memory::Array<f32>,
+        pub vao_queue: memory::Array<ProcessedVertex>,
 
         pub color: P,
         pub depth: D,
-
-        pub vao: memory::Array<f32>,
-        pub vao_layout: stack::Vec<VaoPointer, 1>,
     }
 
     impl<P, D> Gpu<P, D>
@@ -240,7 +195,7 @@ pub mod gpu {
         }
 
         pub fn bind_data(&mut self, data: &Vec<f32>) {
-            self.vao = memory::Array::from_parts([data.len()], clone::Clone::clone(data));
+            self.vao_raw = memory::Array::from_parts([data.len()], clone::Clone::clone(data));
         }
 
         pub fn set_vattrib_ptr(&mut self, stride: usize) {
@@ -251,56 +206,25 @@ pub mod gpu {
             self.vao_layout.push(VaoPointer { stride });
         }
 
-        pub fn cycle_vertex_cores<S>(&mut self, program: &S)
-        where
-            S: shader::Shader + Send + Sync,
-            P: memory::Raster<Item = S::Pixel>,
-        {
-            if vgpu::THREADED {
-                self.vertex_cores.par_iter_mut().for_each(|core| {
-                    core.process(program, &self.color);
-                });
-            }
-            else {
-                self.vertex_cores.iter_mut().for_each(|core| {
-                    core.process(program, &self.color);
-                });
-            }
-        }
-
-        pub fn cycle_raster_cores<S>(&mut self, program: &S)
+        pub fn render<S>(&mut self, program: &S)
         where
             S: shader::Shader + Send + Sync,
             P: memory::Raster<Item = S::Pixel>,
             D: memory::Raster<Item = f32>,
         {
-            if vgpu::THREADED {
-                let color = &self.color;
-                let depth = &self.depth;
-                #[allow(invalid_reference_casting)]
-                unsafe {
-                    self.raster_cores.par_iter_mut().for_each(|core| {
-                        let color = color as *const P as *mut P;
-                        let depth = depth as *const D as *mut D;
-                        core.process(program, &mut *color, &mut *depth);
-                    });
-                }
-            }
-            else {
-                self.raster_cores.iter_mut().for_each(|core| {
-                    core.process(program, &mut self.color, &mut self.depth);
-                });
-            }
+            debug_assert!(self.color.size() == self.depth.size(), "Buffer dimensions must match");
+            self.vscheduler.vertex_stage(
+                program,
+                &mut self.vertex_cores,
+                &mut self.vao_queue,
+                &self.vao_raw,
+                self.vao_layout.peek(),
+            );
         }
     }
 }
 
 pub mod shader {
-    use crate::{
-        memory,
-        vgpu::gpu::{self},
-    };
-
     pub trait Shader {
         /// Vertex shader input
         type Vertex;
@@ -327,44 +251,14 @@ pub mod shader {
 
         /// Converts 'Fragment' to buffer's 'Pixel' representation and writes to memeory
         fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel;
-
-        /**
-        !!! NO OVERRIDE !!!
-
-        This method has a generalized implementation and shouldn't ever be touched
-        */
-        fn render<P, D>(&self, target: &mut gpu::Gpu<P, D>)
-        where
-            Self: Sized + Send + Sync,
-            P: Default + memory::Raster<Item = Self::Pixel> + Send + Sync,
-            D: Default + memory::Raster<Item = f32> + Send + Sync,
-        {
-            debug_assert!(target.color.size() == target.depth.size(), "Buffer dimensions must match");
-            target.scheduler.reset();
-            loop {
-                target.scheduler.load_geometry_cores(
-                    &mut target.vertex_cores,
-                    &target.vao,
-                    &target.vao_layout,
-                );
-                target.cycle_vertex_cores(self);
-                target.scheduler.load_raster_cores(&mut target.raster_cores, &target.vertex_cores);
-                target.cycle_raster_cores(self);
-
-                if !target.scheduler.incomplete(&target.vao) {
-                    break;
-                }
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        memory::transmute,
-        vgpu::shader,
-    };
+    use std::hint;
+
+    use crate::{memory::transmute, vgpu::shader};
 
     struct TestingPipeline;
     impl shader::Shader for TestingPipeline {
@@ -403,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[unsafe(no_mangle)]
     fn controlled_ub() {
         fn generic_pipe_fn<S>(_: S, val: &[f32; 8])
         where
@@ -410,8 +305,16 @@ mod tests {
         {
             let shader_in = transmute::bit_interp::<&[f32; 8], &S::Vertex>(&val);
             let shader_out = transmute::bit_interp::<&S::Vertex, &S::Fragment>(&shader_in);
-            let val = transmute::bit_interp::<&S::Fragment, &[f32; 3]>(&shader_out);
-            assert!(val == &[1.0, 2.0, 3.0]);
+            let good_val = transmute::bit_interp::<&S::Fragment, &[f32; 3]>(&shader_out);
+            let bad_val = transmute::bit_interp::<&S::Fragment, &[f32; 8]>(&shader_out);
+            hint::black_box(&shader_in);
+            hint::black_box(&shader_out);
+            hint::black_box(&good_val);
+            hint::black_box(&bad_val);
+            assert!(size_of_val(good_val) == 3 * size_of::<f32>());
+            assert!(size_of_val(bad_val) == 8 * size_of::<f32>());
+            assert!(good_val == &val[0..3]);
+            assert!(bad_val[3..] == val[3..]);
         }
         let shader = TestingPipeline;
         generic_pipe_fn(shader, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);

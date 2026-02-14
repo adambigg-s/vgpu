@@ -3,8 +3,9 @@ use virtual_gpu::{gpu, memory, shader};
 
 mod utils;
 
-const SWIDTH: usize = 400;
-const SHEIGHT: usize = 300;
+const SWIDTH: usize = 2;
+const SHEIGHT: usize = 2;
+const SSCALE: minifb::Scale = minifb::Scale::X8;
 
 #[rustfmt::skip]
 const TRIANGLE: [f32; 18] = [
@@ -50,7 +51,7 @@ impl shader::Shader for Pipeline {
 }
 
 fn main() {
-    let mut gpu = gpu::Gpu::new(32, 32);
+    let mut gpu = gpu::Gpu::new(3, 3);
     let shader = Pipeline;
     gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
     gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
@@ -61,16 +62,20 @@ fn main() {
         "Triangle",
         SWIDTH,
         SHEIGHT,
-        minifb::WindowOptions { scale: minifb::Scale::X2, ..Default::default() },
+        minifb::WindowOptions { scale: SSCALE, ..Default::default() },
     )
     .unwrap();
 
     loop {
-        shader.render(&mut gpu);
+        gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
+    }
+
+    if SWIDTH * SHEIGHT < 1000 {
+        dbg!(gpu);
     }
 }

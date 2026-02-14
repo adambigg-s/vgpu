@@ -1,4 +1,4 @@
 @echo on
 
-cargo run
+cargo run --example triangle
 

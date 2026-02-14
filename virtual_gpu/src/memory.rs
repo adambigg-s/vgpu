@@ -56,6 +56,10 @@ impl<T> Default for Array<T> {
     }
 }
 
+unsafe impl<T> Send for Array<T> {}
+
+unsafe impl<T> Sync for Array<T> {}
+
 pub mod buffer {
     use std::{convert, mem, ops};
 
@@ -200,6 +204,11 @@ pub mod stack {
             debug_assert!(self.len != 0);
             self.len -= 1;
             unsafe { self.items[self.len].assume_init_read() }
+        }
+
+        pub fn peek(&self) -> &T {
+            debug_assert!(self.len != 0);
+            unsafe { self.items[self.len - 1].assume_init_ref() }
         }
     }
 
