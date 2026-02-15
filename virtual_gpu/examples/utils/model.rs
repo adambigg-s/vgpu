@@ -1,11 +1,9 @@
-#![allow(dead_code)]
-
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct Vertex {
-    pos: glam::Vec3,
-    col: glam::Vec3,
-    uv: glam::Vec2,
+    pub pos: glam::Vec3,
+    pub col: glam::Vec3,
+    pub uv: glam::Vec2,
 }
 
 pub struct Mesh {
@@ -17,10 +15,27 @@ impl Mesh {
     pub fn vertices(&self) -> impl Iterator<Item = Vertex> {
         self.indices.iter().map(|&index| self.vertices[index as usize])
     }
+
+    pub fn to_flat_vertices(&self) -> Vec<f32> {
+        self.vertices()
+            .flat_map(|vertex| {
+                [
+                    vertex.pos.x,
+                    vertex.pos.y,
+                    vertex.pos.z,
+                    vertex.col.x,
+                    vertex.col.y,
+                    vertex.col.z,
+                    vertex.uv.x,
+                    vertex.uv.y,
+                ]
+            })
+            .collect()
+    }
 }
 
 pub struct Model {
-    pub meshes: Vec<Mesh>,
+    pub model: Mesh,
 }
 
 impl Model {
@@ -35,12 +50,13 @@ impl Model {
         )
         .map_err(|err| err.to_string())?;
 
-        let mut meshes = Vec::new();
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
         models.into_iter().for_each(|model| {
-            let mut vertices = Vec::new();
+            let mut vertices_sp = Vec::new();
             #[allow(clippy::identity_op)]
             (0..(&model.mesh.positions.len() / 3)).for_each(|i| {
-                vertices.push(Vertex {
+                vertices_sp.push(Vertex {
                     pos: glam::vec3(
                         (&model.mesh.positions)[i * 3 + 0],
                         (&model.mesh.positions)[i * 3 + 1],
@@ -56,15 +72,16 @@ impl Model {
                     },
                     uv: match !model.mesh.texcoords.is_empty() {
                         | true => {
-                            glam::vec2((&model.mesh.texcoords)[i * 3 + 0], (&model.mesh.texcoords)[i * 3 + 1])
+                            glam::vec2((&model.mesh.texcoords)[i * 2 + 0], (&model.mesh.texcoords)[i * 2 + 1])
                         }
                         | false => Default::default(),
                     },
                 });
             });
-            meshes.push(Mesh { vertices, indices: model.mesh.indices });
+            vertices.extend_from_slice(&vertices_sp);
+            indices.extend_from_slice(&model.mesh.indices);
         });
 
-        Ok(Model { meshes })
+        Ok(Model { model: Mesh { vertices, indices } })
     }
 }

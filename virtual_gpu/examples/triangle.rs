@@ -2,9 +2,10 @@ use virtual_gpu::{gpu, memory, shader};
 
 mod utils;
 
-const SWIDTH: usize = 256;
-const SHEIGHT: usize = 256;
-const SSCALE: minifb::Scale = minifb::Scale::X2;
+const SWIDTH: usize = 128;
+const SHEIGHT: usize = 96;
+const SSCALE: minifb::Scale = minifb::Scale::X8;
+const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 
 #[rustfmt::skip]
 const TRIANGLE: [f32; 18] = [
@@ -50,10 +51,12 @@ impl shader::Shader for Pipeline {
 }
 
 fn main() {
-    let mut gpu = gpu::Gpu::new(3, 3);
-    let shader = Pipeline;
-    gpu.color = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
-    gpu.depth = memory::RenderTarget::new([SWIDTH, SHEIGHT]);
+    let mut gpu = gpu::Gpu::builder()
+        .vertex_cores(4)
+        .raster_cores(8)
+        .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
+        .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
+        .build();
     gpu.bind_data(&TRIANGLE.to_vec());
     gpu.set_vattrib_ptr(6);
 
@@ -64,22 +67,15 @@ fn main() {
         minifb::WindowOptions { scale: SSCALE, ..Default::default() },
     )
     .unwrap();
-    screen.set_target_fps(999);
 
-    let mut starting = std::time::Instant::now();
     loop {
-        gpu.render(&shader);
+        gpu.color.fill(SFILL);
+        gpu.depth.fill(f32::MIN);
+        gpu.render(&Pipeline);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
-
-        println!("fps: {:.2}", starting.elapsed().as_secs_f64().recip());
-        starting = std::time::Instant::now();
-    }
-
-    if SWIDTH * SHEIGHT < 1000 {
-        dbg!(gpu);
     }
 }

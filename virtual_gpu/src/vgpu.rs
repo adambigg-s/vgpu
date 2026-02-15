@@ -52,8 +52,8 @@ pub mod cores {
                 let vertex = transmute::bit_interp::<&[f32], &S::Vertex>(&data);
 
                 let mut position = glam::Vec4::default();
-                let vs = program.vertex(vertex, &mut position);
-                let attributes = transmute::bit_interp::<S::Interpolant, FloatRegister>(&vs);
+                let vs_response = program.vertex(vertex, &mut position);
+                let attributes = transmute::bit_interp::<S::Interpolant, FloatRegister>(&vs_response);
 
                 position = {
                     let inv_depth = position.w.recip();
@@ -199,6 +199,8 @@ pub mod aabb {
 pub mod gpu {
     use std::{clone, sync::atomic, thread};
 
+    use bon::builder;
+
     use crate::{
         memory::{self, stack},
         shader,
@@ -281,16 +283,24 @@ pub mod gpu {
         pub pos: glam::Vec4,
     }
 
-    #[derive(Default, Debug)]
+    #[derive(Default, Debug, bon::Builder)]
     pub struct Gpu<P, D> {
+        #[builder(with = |num: usize| memory::Array::new([num]))]
         pub vertex_cores: memory::Array<cores::VertexCore>,
+        #[builder(with = |num: usize| memory::Array::new([num]))]
         pub raster_cores: memory::Array<cores::RasterCore>,
+        #[builder(default)]
         pub vscheduler: Scheduler,
+        #[builder(default)]
         pub rscheduler: Scheduler,
+        #[builder(default)]
         pub tiles: memory::Array<cores::Tile>,
 
+        #[builder(default)]
         pub vao_layout: stack::Vec<VaoPointer, { vgpu::VAO_SIZE }>,
+        #[builder(default)]
         pub vao_raw: memory::Array<f32>,
+        #[builder(default)]
         pub vao_queue: memory::Array<ProcessedVertex>,
 
         pub color: P,
@@ -334,7 +344,9 @@ pub mod gpu {
                     || self.color.size() != [0, 0] && self.depth.size() == [0, 0],
                 "Buffer dimensions must match, or ONE buffer must be zero-sized"
             );
-            self.vao_queue = memory::Array::new([self.vao_raw.len() / self.vao_layout.peek().stride]);
+            if self.vao_queue.len() != self.vao_raw.len() / self.vao_layout.peek().stride {
+                self.vao_queue = memory::Array::new([self.vao_raw.len() / self.vao_layout.peek().stride]);
+            }
             self.vscheduler.vertex_stage(
                 &mut self.vertex_cores,
                 &mut self.vao_queue,
