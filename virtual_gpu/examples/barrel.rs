@@ -56,7 +56,7 @@ impl shader::Shader for Pipeline {
 
         let tangent_normal = normal_map * 2.0 - glam::Vec3::ONE;
         let normal = frag_vertex_in.nor.normalize();
-        let tangent = if normal.y.abs() < 0.999 {
+        let tangent = if normal.y.abs() < 0.9999 {
             normal.cross(glam::Vec3::Y).normalize()
         }
         else {
@@ -97,6 +97,11 @@ impl shader::Shader for Pipeline {
         let b = (fragment_in.z * 255.9999) as u8 as u32;
         0xffu32 << 24 | r << 16 | g << 8 | b
     }
+
+    #[inline(always)]
+    fn cull_mode() -> shader::CullMode {
+        shader::CullMode::Back
+    }
 }
 
 fn main() {
@@ -128,6 +133,7 @@ fn main() {
     )
     .unwrap();
 
+    let mut timer = std::time::Instant::now();
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
@@ -174,5 +180,8 @@ fn main() {
         if screen.is_key_down(minifb::Key::Up) {
             model_matrix.pos += glam::vec3(0.0, 0.01, 0.0);
         }
+
+        println!("approx fps: {:.2}", timer.elapsed().as_secs_f64().recip());
+        timer = std::time::Instant::now();
     }
 }

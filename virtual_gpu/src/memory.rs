@@ -295,33 +295,3 @@ pub(crate) mod transmute {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::memory::transmute;
-
-    #[test]
-    #[rustfmt::skip]
-    #[allow(unused)]
-    fn bitwise_transmute() {
-        #[repr(C, packed)]
-        struct FooBar {
-            _v3: glam::Vec3,
-            _v2: glam::Vec2,
-        }
-        let foobar = FooBar {
-            _v3: glam::vec3(1.0, 2.0, 3.0),
-            _v2: glam::vec2(4.0, 5.0),
-        };
-        assert!(unsafe { transmute::bit_interp::<FooBar, [f32; 5]>(&foobar) } == [1.0, 2.0, 3.0, 4.0, 5.0]);
-        assert!(unsafe { transmute::bit_interp::<FooBar, [f32; 4]>(&foobar) } == [1.0, 2.0, 3.0, 4.0]);
-        assert!(unsafe { transmute::bit_interp::<FooBar, [f32; 3]>(&foobar) } == [1.0, 2.0, 3.0]);
-        assert!(unsafe { transmute::bit_interp::<FooBar, [f32; 2]>(&foobar) } == [1.0, 2.0]);
-        assert!(unsafe { transmute::bit_interp::<FooBar, [f32; 1]>(&foobar) } == [1.0]);
-    }
-
-    #[test]
-    fn ub_transmute() {
-        assert!(transmute::bit_interp::<i32, bool>(&1));
-        assert!(!transmute::bit_interp::<i32, bool>(&2));
-    }
-}

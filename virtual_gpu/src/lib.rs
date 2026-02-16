@@ -1,5 +1,6 @@
 mod interp;
 mod vgpu;
+mod testing;
 
 pub mod memory;
 

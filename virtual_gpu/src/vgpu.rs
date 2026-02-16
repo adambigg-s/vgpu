@@ -11,7 +11,7 @@ pub mod cores {
         gpu, interp,
         memory::{self, transmute},
         shader,
-        vgpu::{self, aabb},
+        vgpu::{self, aabb, cull},
     };
 
     pub type FloatRegister = interp::Vector<f32, { vgpu::REGISTER_SIZE }>;
@@ -107,6 +107,20 @@ pub mod cores {
                     self.positions[idx] = data[idx].pos;
                 });
 
+                match S::cull_mode() {
+                    | shader::CullMode::Front => {
+                        if cull::triangle_cww(self.positions) {
+                            continue;
+                        }
+                    }
+                    | shader::CullMode::Back => {
+                        if cull::triangle_ccww(self.positions) {
+                            continue;
+                        }
+                    }
+                    | shader::CullMode::None => (),
+                }
+
                 let [mut minx, mut miny, mut maxx, mut maxy] = self.bounding_box();
                 [minx, miny, maxx, maxy] = [
                     minx.max(0.0),
@@ -126,8 +140,18 @@ pub mod cores {
 
                         let mut pos = interp::weighted_sum(self.positions, lambdas.to_array());
                         let distance = pos.z;
-                        if &distance > depth.peek(col as usize, row as usize) {
-                            continue;
+                        match S::depth_test() {
+                            | shader::DepthMode::WriteGreater => {
+                                if &distance > depth.peek(col as usize, row as usize) {
+                                    continue;
+                                }
+                            }
+                            | shader::DepthMode::WriteLess => {
+                                if &distance < depth.peek(col as usize, row as usize) {
+                                    continue;
+                                }
+                            }
+                            | shader::DepthMode::NoWrite => (),
                         }
 
                         let inv_depth = pos.w.recip();
@@ -147,8 +171,12 @@ pub mod cores {
                             row
                         );
 
-                        *color.get(col as usize, row as usize) = pixel;
-                        *depth.get(col as usize, row as usize) = distance;
+                        if S::pixel_write() {
+                            *color.get(col as usize, row as usize) = pixel;
+                        }
+                        if S::depth_write() {
+                            *depth.get(col as usize, row as usize) = distance;
+                        }
                     }
                 }
             }
@@ -165,6 +193,20 @@ pub mod cores {
             });
             [minx, miny, maxx, maxy]
         }
+    }
+}
+
+pub mod cull {
+    use glam::Vec4Swizzles;
+
+    pub fn triangle_cww(vertices: [glam::Vec4; 3]) -> bool {
+        let [v1, v2, v3] = vertices.map(|vertex| vertex.xy());
+        (v2 - v1).perp_dot(v3 - v1).is_sign_negative()
+    }
+
+    pub fn triangle_ccww(vertices: [glam::Vec4; 3]) -> bool {
+        let [v1, v2, v3] = vertices.map(|vertex| vertex.xy());
+        (v2 - v1).perp_dot(v3 - v1).is_sign_positive()
     }
 }
 
@@ -367,6 +409,22 @@ pub mod gpu {
 }
 
 pub mod shader {
+    #[derive(Default)]
+    pub enum CullMode {
+        #[default]
+        None,
+        Front,
+        Back,
+    }
+
+    #[derive(Default)]
+    pub enum DepthMode {
+        #[default]
+        WriteGreater,
+        WriteLess,
+        NoWrite,
+    }
+
     pub trait Shader {
         /// Vertex shader input
         type Vertex;
@@ -393,72 +451,25 @@ pub mod shader {
 
         /// Converts 'Fragment' to buffer's 'Pixel' representation and writes to memeory
         fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel;
-    }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::hint;
-
-    use crate::{memory::transmute, vgpu::shader};
-
-    struct TestingPipeline;
-    impl shader::Shader for TestingPipeline {
-        type Vertex = [f32; 6];
-        type Interpolant = [f32; 6];
-        type Fragment = [f32; 3];
-        type Pixel = u32;
-        fn vertex(&self, _: &Self::Vertex, _: &mut glam::Vec4) -> Self::Interpolant {
-            todo!()
-        }
-        fn fragment(&self, _: &Self::Interpolant) -> Self::Fragment {
-            todo!()
-        }
-        fn pixel(&self, _: &Self::Fragment) -> Self::Pixel {
-            todo!()
-        }
-    }
-
-    #[test]
-    fn ridiculous_transmute() {
-        fn generic_pipe_fn<S>(_: S, v: &[f32; 32])
-        where
-            S: shader::Shader,
-        {
-            unsafe {
-                assert!(size_of_val(v) == 32 * size_of::<f32>());
-                assert!(size_of_val(&*(v.as_ptr() as *const S::Pixel)) == size_of::<f32>());
-                assert!(size_of_val(&*(v.as_ptr() as *const S::Vertex)) == 6 * size_of::<f32>());
-                assert!(size_of_val(&*(v.as_ptr() as *const S::Fragment)) == 3 * size_of::<f32>());
-                assert!(size_of_val(&*(v.as_ptr() as *const S::Interpolant)) == 6 * size_of::<f32>());
-            }
+        // Optional overload to cull enable triangle culling
+        fn cull_mode() -> CullMode {
+            Default::default()
         }
 
-        let shader = TestingPipeline;
-        generic_pipe_fn(shader, &[Default::default(); 32]);
-    }
-
-    #[test]
-    #[unsafe(no_mangle)]
-    fn controlled_ub() {
-        fn generic_pipe_fn<S>(_: S, val: &[f32; 8])
-        where
-            S: shader::Shader,
-        {
-            let shader_in = transmute::bit_interp::<&[f32; 8], &S::Vertex>(&val);
-            let shader_out = transmute::bit_interp::<&S::Vertex, &S::Fragment>(&shader_in);
-            let good_val = transmute::bit_interp::<&S::Fragment, &[f32; 3]>(&shader_out);
-            let bad_val = transmute::bit_interp::<&S::Fragment, &[f32; 8]>(&shader_out);
-            hint::black_box(&shader_in);
-            hint::black_box(&shader_out);
-            hint::black_box(&good_val);
-            hint::black_box(&bad_val);
-            assert!(size_of_val(good_val) == 3 * size_of::<f32>());
-            assert!(size_of_val(bad_val) == 8 * size_of::<f32>());
-            assert!(good_val == &val[0..3]);
-            assert!(bad_val[3..] == val[3..]);
+        // Optional overload to set depth-testing mode to allow use of different screen-space bases
+        fn depth_test() -> DepthMode {
+            Default::default()
         }
-        let shader = TestingPipeline;
-        generic_pipe_fn(shader, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+
+        // Optional overload to enable/disable writing to depth buffer
+        fn depth_write() -> bool {
+            true
+        }
+
+        // Optional overload to enable/disable writing to pixel buffer
+        fn pixel_write() -> bool {
+            true
+        }
     }
 }

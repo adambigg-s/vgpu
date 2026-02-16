@@ -2,45 +2,41 @@ use virtual_gpu::{gpu, memory, shader};
 
 mod utils;
 
-const SWIDTH: usize = 256 / 8;
-const SHEIGHT: usize = 196 / 8;
-const SSCALE: minifb::Scale = minifb::Scale::X32;
+const SWIDTH: usize = 256 * 2;
+const SHEIGHT: usize = 196 * 2;
+const SSCALE: minifb::Scale = minifb::Scale::X2;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
 const STITLE: &str = "Triangle Example";
 
 #[rustfmt::skip]
 const TRIANGLE: [f32; 18] = [
-    -0.6, -0.5, 0.0, 1.0, 0.7, 0.0,
-    0.5, -0.6, 0.0, 0.0, 1.0, 0.7,
-    0.1, 0.6, 0.0, 0.7, 0.0, 1.0,
+    // Positions     Colors
+    -0.5, -0.5, 0.0,     1.0, 0.7, 0.0,
+     0.5, -0.5, 0.0,     0.0, 1.0, 0.7,
+     0.0,  0.5, 0.0,     0.7, 0.0, 1.0,
 ];
-
-struct Vertex {
-    pos: glam::Vec3,
-    col: glam::Vec3,
-}
-
-struct Fragment {
-    col: glam::Vec3,
-}
 
 struct Pipeline;
 impl shader::Shader for Pipeline {
-    type Vertex = Vertex;
+    // (position, color)
+    type Vertex = (glam::Vec3, glam::Vec3);
 
-    type Interpolant = Fragment;
+    // Vertex Color
+    type Interpolant = glam::Vec3;
 
+    // Fragment Color
     type Fragment = glam::Vec3;
 
     type Pixel = u32;
 
     fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec4) -> Self::Interpolant {
-        *position_out = glam::vec3(vertex_in.pos.x, vertex_in.pos.y, vertex_in.pos.z).to_homogeneous();
-        Self::Interpolant { col: vertex_in.col }
+        let (pos, col) = *vertex_in;
+        *position_out = pos.to_homogeneous();
+        col
     }
 
     fn fragment(&self, frag_vertex_in: &Self::Interpolant) -> Self::Fragment {
-        frag_vertex_in.col
+        *frag_vertex_in
     }
 
     fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel {
