@@ -17,13 +17,16 @@ const STITLE: &str = "Barrel Example";
 
 #[derive(Default)]
 struct Pipeline {
-    model_mat: glam::Mat4,
-    mvp_mat: glam::Mat4,
-    nor_mat: glam::Mat3,
-    tex: texture::Texture,
-    nor: texture::Texture,
-    met: texture::Texture,
-    light_direction: glam::Vec3,
+    model_matrix: glam::Mat4,
+    mvp_matrix: glam::Mat4,
+    normal_matrix: glam::Mat3,
+
+    diffuse: texture::Texture,
+    normal: texture::Texture,
+    metal: texture::Texture,
+
+    light: glam::Vec3,
+    camera: glam::Vec3,
 }
 
 impl shader::Shader for Pipeline {
@@ -37,23 +40,54 @@ impl shader::Shader for Pipeline {
 
     #[inline(always)]
     fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec4) -> Self::Interpolant {
-        *position_out = self.mvp_mat * vertex_in.pos.to_homogeneous();
+        *position_out = self.mvp_matrix * vertex_in.pos.to_homogeneous();
 
         let mut vertex_out = *vertex_in;
-        vertex_out.pos = (self.model_mat * vertex_in.pos.to_homogeneous()).xyz();
-        vertex_out.nor = self.nor_mat * vertex_out.nor;
+        vertex_out.pos = (self.model_matrix * vertex_in.pos.to_homogeneous()).xyz();
+        vertex_out.nor = self.normal_matrix * vertex_out.nor;
         vertex_out
     }
 
     #[inline(always)]
     fn fragment(&self, frag_vertex_in: &Self::Interpolant) -> Self::Fragment {
-        let albedo = self.tex.sample_bilinear(frag_vertex_in.uv.x, frag_vertex_in.uv.y);
-        let normal = (self.nor.sample(frag_vertex_in.uv.x, frag_vertex_in.uv.y) * 0.25 + frag_vertex_in.nor)
-            .normalize();
-        let reflec = self.met.sample(frag_vertex_in.uv.x, frag_vertex_in.uv.y);
-        let relative = (self.light_direction - frag_vertex_in.pos).normalize();
-        let light = relative.dot(normal).max(0.05);
-        albedo * (light + reflec * 0.25)
+        let diffuse_map = self.diffuse.sample_bilinear(frag_vertex_in.uv.x, frag_vertex_in.uv.y);
+        let normal_map = self.normal.sample_bilinear(frag_vertex_in.uv.x, frag_vertex_in.uv.y);
+        let metallic_map = self.metal.sample_bilinear(frag_vertex_in.uv.x, frag_vertex_in.uv.y).x;
+
+        let tangent_normal = normal_map * 2.0 - glam::Vec3::ONE;
+        let normal = frag_vertex_in.nor.normalize();
+        let tangent = if normal.y.abs() < 0.999 {
+            normal.cross(glam::Vec3::Y).normalize()
+        }
+        else {
+            normal.cross(glam::Vec3::X).normalize()
+        };
+        let bitangent = normal.cross(tangent);
+        let world_normal =
+            (tangent * tangent_normal.x + bitangent * tangent_normal.y + normal * tangent_normal.z)
+                .normalize();
+
+        let light_dir = (self.light - frag_vertex_in.pos).normalize();
+        let view_dir = (self.camera - frag_vertex_in.pos).normalize();
+        let half_dir = (light_dir + view_dir).normalize();
+
+        let ndl = world_normal.dot(light_dir).max(0.0);
+        let ndh = world_normal.dot(half_dir).max(0.0);
+        let ndv = world_normal.dot(view_dir).max(0.0);
+
+        let shine = 32.0 + metallic_map * 96.0;
+        let specular = ndh.powf(shine);
+        let fresnel = (1.0 - ndv).powf(3.0);
+
+        let diffuse_color = diffuse_map * (1.0 - metallic_map);
+        let specular_color = glam::Vec3::splat(1.0 - metallic_map * 0.5) + diffuse_map * metallic_map;
+        let ambient_color = glam::Vec3::splat(0.025);
+
+        let diffuse_final = diffuse_color * ndl;
+        let spec_final = specular_color * specular * (metallic_map * 0.5 + 0.5);
+        let rim_final = specular_color * fresnel * 0.15 * metallic_map;
+
+        (ambient_color + diffuse_final + spec_final + rim_final) * 1.15
     }
 
     #[inline(always)]
@@ -72,15 +106,15 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
-    let model = model::Model::new("../vendor/barrel/barrel.obj").unwrap();
+    let model = model::Mesh::new("../vendor/barrel/barrel.obj").unwrap();
     let mut shader = Pipeline {
-        tex: "../vendor/barrel/texture.jpg".into(),
-        nor: "../vendor/barrel/normal.jpg".into(),
-        met: "../vendor/barrel/metallic.jpg".into(),
-        light_direction: glam::vec3(10.0, 25.0, 15.0),
+        diffuse: "../vendor/barrel/texture.jpg".into(),
+        normal: "../vendor/barrel/normal.jpg".into(),
+        metal: "../vendor/barrel/metallic.jpg".into(),
+        light: glam::vec3(10.0, 25.0, 15.0),
         ..Default::default()
     };
-    gpu.bind_data(&model.model.to_flat_vertices());
+    gpu.bind_data(&model.to_flat_vertices());
     gpu.set_vattrib_ptr(8);
 
     let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 6.0).into()).build();
@@ -93,16 +127,17 @@ fn main() {
         minifb::WindowOptions { scale: SSCALE, ..Default::default() },
     )
     .unwrap();
-    screen.set_target_fps(9999);
 
-    let mut starting = std::time::Instant::now();
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
-        shader.model_mat = model_matrix.matrix();
-        shader.mvp_mat =
+
+        shader.model_matrix = model_matrix.matrix();
+        shader.mvp_matrix =
             camera.proj_matrix(SWIDTH as f32 / SHEIGHT as f32) * camera.view_matrix() * model_matrix.matrix();
-        shader.nor_mat = glam::Mat3::from_mat4(model_matrix.matrix()).inverse().transpose();
+        shader.normal_matrix = glam::Mat3::from_mat4(model_matrix.matrix()).inverse().transpose();
+        shader.camera = camera.transform.pos;
+
         gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
@@ -139,8 +174,5 @@ fn main() {
         if screen.is_key_down(minifb::Key::Up) {
             model_matrix.pos += glam::vec3(0.0, 0.01, 0.0);
         }
-
-        println!("fps: {:.2}", starting.elapsed().as_secs_f64().recip());
-        starting = std::time::Instant::now();
     }
 }

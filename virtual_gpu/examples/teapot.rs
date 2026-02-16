@@ -50,8 +50,8 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
-    let model = model::Model::new("../vendor/teapot/teapot.obj").unwrap();
-    gpu.bind_data(&model.model.to_flat_vertices());
+    let model = model::Mesh::new("../vendor/teapot/teapot.obj").unwrap();
+    gpu.bind_data(&model.to_flat_vertices());
     gpu.set_vattrib_ptr(8);
 
     let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 8.0).into()).build();

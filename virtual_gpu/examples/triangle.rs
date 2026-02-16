@@ -70,8 +70,8 @@ fn main() {
     .unwrap();
 
     loop {
-        // gpu.color.fill(SFILL);
-        // gpu.depth.fill(f32::INFINITY);
+        gpu.color.fill(SFILL);
+        gpu.depth.fill(f32::INFINITY);
         gpu.render(&Pipeline);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 

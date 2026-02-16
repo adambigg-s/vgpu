@@ -12,33 +12,6 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn vertices(&self) -> impl Iterator<Item = Vertex> {
-        self.indices.iter().map(|&index| self.vertices[index as usize])
-    }
-
-    pub fn to_flat_vertices(&self) -> Vec<f32> {
-        self.vertices()
-            .flat_map(|vertex| {
-                [
-                    vertex.pos.x,
-                    vertex.pos.y,
-                    vertex.pos.z,
-                    vertex.nor.x,
-                    vertex.nor.y,
-                    vertex.nor.z,
-                    vertex.uv.x,
-                    vertex.uv.y,
-                ]
-            })
-            .collect()
-    }
-}
-
-pub struct Model {
-    pub model: Mesh,
-}
-
-impl Model {
     pub fn new(model_path: &'static str) -> Result<Self, String> {
         let (models, ..) = tobj::load_obj(
             model_path,
@@ -86,7 +59,28 @@ impl Model {
             indices.extend_from_slice(&model.mesh.indices);
         });
 
-        Ok(Model { model: Mesh { vertices, indices } })
+        Ok(Mesh { vertices, indices })
+    }
+
+    pub fn vertices(&self) -> impl Iterator<Item = Vertex> {
+        self.indices.iter().map(|&index| self.vertices[index as usize])
+    }
+
+    pub fn to_flat_vertices(&self) -> Vec<f32> {
+        self.vertices()
+            .flat_map(|vertex| {
+                [
+                    vertex.pos.x,
+                    vertex.pos.y,
+                    vertex.pos.z,
+                    vertex.nor.x,
+                    vertex.nor.y,
+                    vertex.nor.z,
+                    vertex.uv.x,
+                    vertex.uv.y,
+                ]
+            })
+            .collect()
     }
 }
 
