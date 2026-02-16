@@ -1,4 +1,4 @@
 @echo on
 
-cargo run --example triangle
+cargo run --example barrel
 

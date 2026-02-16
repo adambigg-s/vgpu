@@ -2,16 +2,17 @@ use virtual_gpu::{gpu, memory, shader};
 
 mod utils;
 
-const SWIDTH: usize = 128;
-const SHEIGHT: usize = 96;
-const SSCALE: minifb::Scale = minifb::Scale::X8;
+const SWIDTH: usize = 256 / 8;
+const SHEIGHT: usize = 196 / 8;
+const SSCALE: minifb::Scale = minifb::Scale::X32;
 const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
+const STITLE: &str = "Triangle Example";
 
 #[rustfmt::skip]
 const TRIANGLE: [f32; 18] = [
-    -0.5, -0.5, 0.0, 1.0, 0.7, 0.0,
-    0.5, -0.5, 0.0, 0.0, 1.0, 0.7,
-    0.0, 0.5, 0.0, 0.7, 0.0, 1.0,
+    -0.6, -0.5, 0.0, 1.0, 0.7, 0.0,
+    0.5, -0.6, 0.0, 0.0, 1.0, 0.7,
+    0.1, 0.6, 0.0, 0.7, 0.0, 1.0,
 ];
 
 struct Vertex {
@@ -61,7 +62,7 @@ fn main() {
     gpu.set_vattrib_ptr(6);
 
     let mut screen = minifb::Window::new(
-        "Triangle",
+        STITLE,
         SWIDTH,
         SHEIGHT,
         minifb::WindowOptions { scale: SSCALE, ..Default::default() },
@@ -69,8 +70,8 @@ fn main() {
     .unwrap();
 
     loop {
-        gpu.color.fill(SFILL);
-        gpu.depth.fill(f32::MIN);
+        // gpu.color.fill(SFILL);
+        // gpu.depth.fill(f32::INFINITY);
         gpu.render(&Pipeline);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 

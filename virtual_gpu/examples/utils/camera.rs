@@ -1,6 +1,6 @@
 use crate::utils::transform;
 
-const FOV: f32 = 90.0f32.to_radians();
+const FOV: f32 = 60.0f32.to_radians();
 const ZFAR: f32 = 500.0;
 const ZNEAR: f32 = 0.05;
 

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bon = "3.9.0"
 glam = "0.31.0"
+image = "0.25.9"
 minifb = "0.28.0"
 rayon = "1.11.0"
 tobj = "4.0.3"

@@ -37,8 +37,12 @@ pub mod cores {
             debug_assert!(
                 size_of::<S::Vertex>() < size_of::<FloatRegister>()
                     && size_of::<S::Interpolant>() < size_of::<FloatRegister>(),
-                "Vertex attributes are too large for core buffers"
+                "Vertex attributes are too large: {}\nVertex size: {}\nInterpolant size: {}",
+                vgpu::REGISTER_SIZE,
+                size_of::<S::Vertex>(),
+                size_of::<S::Interpolant>(),
             );
+
             let [hw, hh] = viewport.size().map(|dim| dim as f32 / 2.0);
             loop {
                 let index = scheduler.head.fetch_add(1, atomic::Ordering::Relaxed);
@@ -53,10 +57,11 @@ pub mod cores {
 
                 let mut position = glam::Vec4::default();
                 let vs_response = program.vertex(vertex, &mut position);
-                let attributes = transmute::bit_interp::<S::Interpolant, FloatRegister>(&vs_response);
+                let mut attributes = transmute::bit_interp::<S::Interpolant, FloatRegister>(&vs_response);
 
                 position = {
                     let inv_depth = position.w.recip();
+                    attributes = attributes * inv_depth;
                     position *= inv_depth;
                     position.w = inv_depth;
                     position.x = position.x * hw + hw;
@@ -71,8 +76,8 @@ pub mod cores {
 
     #[derive(Default, Debug)]
     pub struct RasterCore {
-        pub attribs_in: [FloatRegister; 3],
-        pub pos_in: [glam::Vec4; 3],
+        pub attributes: [FloatRegister; 3],
+        pub positions: [glam::Vec4; 3],
         pub tile: Tile,
     }
 
@@ -98,8 +103,8 @@ pub mod cores {
 
                 let data = &queue[head..tail];
                 (0..3).for_each(|idx| {
-                    self.attribs_in[idx] = data[idx].attribs;
-                    self.pos_in[idx] = data[idx].pos;
+                    self.attributes[idx] = data[idx].attribs;
+                    self.positions[idx] = data[idx].pos;
                 });
 
                 let [mut minx, mut miny, mut maxx, mut maxy] = self.bounding_box();
@@ -109,7 +114,7 @@ pub mod cores {
                     maxx.min((color.width() - 1) as f32),
                     maxy.min((color.height() - 1) as f32),
                 ];
-                let interp = interp::BarycentricSystem::from_points(self.pos_in.map(|vertex| vertex.xy()));
+                let interp = interp::BarycentricSystem::from_points(self.positions.map(|vertex| vertex.xy()));
 
                 for row in miny as i32..=maxy as i32 {
                     for col in minx as i32..=maxx as i32 {
@@ -119,19 +124,18 @@ pub mod cores {
                             continue;
                         }
 
-                        let mut pos = interp::weighted_sum(self.pos_in, lambdas.to_array());
+                        let mut pos = interp::weighted_sum(self.positions, lambdas.to_array());
                         let distance = pos.z;
-                        if &distance < depth.peek(col as usize, row as usize) {
+                        if &distance > depth.peek(col as usize, row as usize) {
                             continue;
                         }
 
-                        let inv_depth = distance.recip();
+                        let inv_depth = pos.w.recip();
                         pos *= inv_depth;
-
                         let interp = interp::weighted_sum(
-                            *interp::Vector::from(self.attribs_in.map(interp::Vector::from)),
+                            *interp::Vector::from(self.attributes.map(interp::Vector::from)),
                             lambdas.to_array(),
-                        );
+                        ) * inv_depth;
                         let fragment = program
                             .fragment(transmute::bit_interp::<&FloatRegister, &S::Interpolant>(&&interp));
                         let pixel = program.pixel(&fragment);
@@ -153,7 +157,7 @@ pub mod cores {
         fn bounding_box(&self) -> [f32; 4] {
             let [mut minx, mut miny] = [f32::INFINITY, f32::INFINITY];
             let [mut maxx, mut maxy] = [f32::NEG_INFINITY, f32::NEG_INFINITY];
-            self.pos_in.iter().for_each(|vertex| {
+            self.positions.iter().for_each(|vertex| {
                 minx = minx.min(vertex.x);
                 miny = miny.min(vertex.y);
                 maxx = maxx.max(vertex.x);
@@ -198,8 +202,6 @@ pub mod aabb {
 
 pub mod gpu {
     use std::{clone, sync::atomic, thread};
-
-    use bon::builder;
 
     use crate::{
         memory::{self, stack},
@@ -344,9 +346,7 @@ pub mod gpu {
                     || self.color.size() != [0, 0] && self.depth.size() == [0, 0],
                 "Buffer dimensions must match, or ONE buffer must be zero-sized"
             );
-            if self.vao_queue.len() != self.vao_raw.len() / self.vao_layout.peek().stride {
-                self.vao_queue = memory::Array::new([self.vao_raw.len() / self.vao_layout.peek().stride]);
-            }
+            self.vao_queue = memory::Array::new([self.vao_raw.len() / self.vao_layout.peek().stride]);
             self.vscheduler.vertex_stage(
                 &mut self.vertex_cores,
                 &mut self.vao_queue,

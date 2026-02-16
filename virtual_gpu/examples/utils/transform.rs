@@ -1,6 +1,10 @@
+#[derive(bon::Builder)]
 pub struct Transform {
+    #[builder(default)]
     pub scl: glam::Vec3,
+    #[builder(default)]
     pub pos: glam::Vec3,
+    #[builder(default)]
     pub rot: glam::Quat,
 }
 
