@@ -1,0 +1,10 @@
+[package]
+name = "example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glam = { workspace = true }
+gputils = { version = "0.1.0", path = "../gputils" }
+minifb = "0.28.0"
+virtual_gpu = { version = "0.1.0", path = "../virtual_gpu" }

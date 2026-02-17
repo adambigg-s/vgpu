@@ -1,7 +1,5 @@
 use virtual_gpu::{gpu, memory, shader};
 
-mod utils;
-
 const SWIDTH: usize = 256 * 2;
 const SHEIGHT: usize = 196 * 2;
 const SSCALE: minifb::Scale = minifb::Scale::X2;

@@ -1,11 +1,5 @@
+use gputils::{camera, model, transform};
 use virtual_gpu::{gpu, memory, shader};
-
-use crate::utils::{
-    camera, model,
-    transform::{self},
-};
-
-mod utils;
 
 const SWIDTH: usize = 256;
 const SHEIGHT: usize = 196;
@@ -50,7 +44,7 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
-    let model = model::Mesh::new("../vendor/teapot/teapot.obj").unwrap();
+    let model = model::Mesh::new("vendor/teapot/teapot.obj").unwrap();
     gpu.bind_data(&model.to_flat_vertices());
     gpu.set_vattrib_ptr(8);
 
@@ -66,7 +60,6 @@ fn main() {
     .unwrap();
     screen.set_target_fps(9999);
 
-    let mut starting = std::time::Instant::now();
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
@@ -78,29 +71,10 @@ fn main() {
         gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
+        example::model_translation(&mut model_matrix, &screen);
+        example::model_rotation(&mut model_matrix, &screen);
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
-        if screen.is_key_down(minifb::Key::W) {
-            model_matrix.rot *= glam::Quat::from_rotation_x(-0.01);
-        }
-        if screen.is_key_down(minifb::Key::S) {
-            model_matrix.rot *= glam::Quat::from_rotation_x(0.01);
-        }
-        if screen.is_key_down(minifb::Key::A) {
-            model_matrix.rot *= glam::Quat::from_rotation_y(0.01);
-        }
-        if screen.is_key_down(minifb::Key::D) {
-            model_matrix.rot *= glam::Quat::from_rotation_y(-0.01);
-        }
-        if screen.is_key_down(minifb::Key::Q) {
-            model_matrix.rot *= glam::Quat::from_rotation_z(0.01);
-        }
-        if screen.is_key_down(minifb::Key::E) {
-            model_matrix.rot *= glam::Quat::from_rotation_z(-0.01);
-        }
-
-        println!("fps: {:.2}", starting.elapsed().as_secs_f64().recip());
-        starting = std::time::Instant::now();
     }
 }

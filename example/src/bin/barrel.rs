@@ -1,13 +1,10 @@
 use glam::Vec4Swizzles;
-use virtual_gpu::{gpu, memory, shader};
-
-use crate::utils::{
+use gputils::{
     camera,
     model::{self, texture},
-    transform::{self},
+    transform,
 };
-
-mod utils;
+use virtual_gpu::{gpu, memory, shader};
 
 const SWIDTH: usize = 256 * 4;
 const SHEIGHT: usize = 196 * 4;
@@ -111,11 +108,11 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
-    let model = model::Mesh::new("../vendor/barrel/barrel.obj").unwrap();
+    let model = model::Mesh::new("vendor/barrel/barrel.obj").unwrap();
     let mut shader = Pipeline {
-        diffuse: "../vendor/barrel/texture.jpg".into(),
-        normal: "../vendor/barrel/normal.jpg".into(),
-        metal: "../vendor/barrel/metallic.jpg".into(),
+        diffuse: "vendor/barrel/texture.jpg".into(),
+        normal: "vendor/barrel/normal.jpg".into(),
+        metal: "vendor/barrel/metallic.jpg".into(),
         light: glam::vec3(10.0, 25.0, 15.0),
         ..Default::default()
     };
@@ -134,6 +131,7 @@ fn main() {
     .unwrap();
 
     let mut timer = std::time::Instant::now();
+    let mut average_fps = 0.0;
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
@@ -147,41 +145,18 @@ fn main() {
         gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
+        example::model_rotation(&mut model_matrix, &screen);
+        example::model_translation(&mut model_matrix, &screen);
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
-        if screen.is_key_down(minifb::Key::W) {
-            model_matrix.rot *= glam::Quat::from_rotation_x(-0.01);
-        }
-        if screen.is_key_down(minifb::Key::S) {
-            model_matrix.rot *= glam::Quat::from_rotation_x(0.01);
-        }
-        if screen.is_key_down(minifb::Key::A) {
-            model_matrix.rot *= glam::Quat::from_rotation_y(0.01);
-        }
-        if screen.is_key_down(minifb::Key::D) {
-            model_matrix.rot *= glam::Quat::from_rotation_y(-0.01);
-        }
-        if screen.is_key_down(minifb::Key::Q) {
-            model_matrix.rot *= glam::Quat::from_rotation_z(0.01);
-        }
-        if screen.is_key_down(minifb::Key::E) {
-            model_matrix.rot *= glam::Quat::from_rotation_z(-0.01);
-        }
-        if screen.is_key_down(minifb::Key::Down) {
-            model_matrix.pos -= glam::vec3(0.0, 0.01, 0.0);
-        }
-        if screen.is_key_down(minifb::Key::Up) {
-            model_matrix.pos += glam::vec3(0.0, 0.01, 0.0);
-        }
-        if screen.is_key_down(minifb::Key::Down) {
-            model_matrix.pos -= glam::vec3(0.0, 0.01, 0.0);
-        }
-        if screen.is_key_down(minifb::Key::Up) {
-            model_matrix.pos += glam::vec3(0.0, 0.01, 0.0);
-        }
 
-        println!("approx fps: {:.2}", timer.elapsed().as_secs_f64().recip());
+        let elapsed = timer.elapsed().as_secs_f64().recip();
+        average_fps += elapsed;
+        average_fps /= 2.0;
+        println!("approx fps: {:.2}", elapsed);
         timer = std::time::Instant::now();
     }
+
+    println!("averaged fps: {:?}", average_fps);
 }

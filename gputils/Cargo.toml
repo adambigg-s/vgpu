@@ -1,8 +1,11 @@
 [package]
-name = "virtual_gpu"
+name = "gputils"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 bon = { workspace = true }
 glam = { workspace = true }
+image = "0.25.9"
+tobj = "4.0.3"
+virtual_gpu = { version = "0.1.0", path = "../virtual_gpu" }
