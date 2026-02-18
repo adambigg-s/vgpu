@@ -1,8 +1,9 @@
 mod interp;
-mod vgpu;
 mod testing;
 
+pub mod gpu;
 pub mod memory;
+pub mod shader;
 
-pub use vgpu::gpu;
-pub use vgpu::shader;
+pub use gpu::Gpu;
+pub use shader::Shader;

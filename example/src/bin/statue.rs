@@ -8,13 +8,50 @@ use virtual_gpu::{gpu, memory, shader};
 
 const SWIDTH: usize = 256 * 4;
 const SHEIGHT: usize = 196 * 4;
+// const SWIDTH: usize = 1920;
+// const SHEIGHT: usize = 1080;
 const SSCALE: minifb::Scale = minifb::Scale::X1;
-// const SFILL: u32 = 0xffu32 << 24 | 220u32 << 16 | 220u32 << 8 | 200u32;
 const SFILL: u32 = 0xffu32 << 24 | 220u32 << 16 | 220u32 << 8 | 200u32;
-const STITLE: &str = "Barrel Example";
+const STITLE: &str = "Statue PBR Example";
 
 #[derive(Default)]
-struct Pipeline {
+struct ShadowPipeline {
+    mvp_matrix: glam::Mat4,
+}
+
+impl shader::Shader for ShadowPipeline {
+    type Vertex = model::Vertex;
+
+    type Interpolant = u32;
+
+    type Fragment = u32;
+
+    type Pixel = u32;
+
+    #[inline(always)]
+    fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec4) -> Self::Interpolant {
+        *position_out = self.mvp_matrix * vertex_in.pos.to_homogeneous();
+        0
+    }
+
+    #[inline(always)]
+    fn fragment(&self, _: &Self::Interpolant) -> Self::Fragment {
+        0
+    }
+
+    #[inline(always)]
+    fn pixel(&self, _: &Self::Fragment) -> Self::Pixel {
+        0
+    }
+
+    #[inline(always)]
+    fn pixel_write() -> bool {
+        false
+    }
+}
+
+#[derive(Default)]
+struct ObjectPipeline {
     model_matrix: glam::Mat4,
     mvp_matrix: glam::Mat4,
     normal_matrix: glam::Mat3,
@@ -27,7 +64,7 @@ struct Pipeline {
     camera: glam::Vec3,
 }
 
-impl shader::Shader for Pipeline {
+impl shader::Shader for ObjectPipeline {
     type Vertex = model::Vertex;
 
     type Interpolant = model::Vertex;
@@ -73,7 +110,7 @@ impl shader::Shader for Pipeline {
         let ndh = world_normal.dot(half_dir).max(0.0);
         let ndv = world_normal.dot(view_dir).max(0.0);
 
-        let shine = 32.0 + metallic_map * 96.0;
+        let shine = 64.0 + metallic_map * 96.0;
         let specular = ndh.powf(shine);
         let fresnel = (1.0 - ndv).powf(3.0);
 
@@ -109,18 +146,32 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
-    let model = model::Mesh::new("vendor/barrel/barrel.obj").unwrap();
-    let mut shader = Pipeline {
-        diffuse: "vendor/barrel/texture.jpg".into(),
-        normal: "vendor/barrel/normal.jpg".into(),
-        metal: "vendor/barrel/metallic.jpg".into(),
+
+    // let model = model::Mesh::new("vendor/statue/lion_head_1k.obj").unwrap();
+    // let mut shader = ObjectPipeline {
+    //     diffuse: "vendor/statue/lion_head_diff_1k.jpg".into(),
+    //     normal: "vendor/statue/lion_head_nor_gl_1k.jpg".into(),
+    //     metal: "vendor/statue/lion_head_rough_1k.jpg".into(),
+    //     light: glam::vec3(10.0, 25.0, 15.0),
+    //     ..Default::default()
+    // };
+
+    let model = model::Mesh::new("vendor/table/ClassicConsole_01_1k.obj").unwrap();
+    let mut shader = ObjectPipeline {
+        diffuse: "vendor/table/ClassicConsole_01_diff_1k.jpg".into(),
+        // diffuse: texture::Texture::debug_fallback(),
+        normal: "vendor/table/ClassicConsole_01_nor_gl_1k.jpg".into(),
+        // metal: texture::Texture::debug_fallback(),
+        metal: "vendor/table/ClassicConsole_01_roughness_1k.jpg".into(),
         light: glam::vec3(10.0, 25.0, 15.0),
         ..Default::default()
     };
+
+    let depth_shader = ShadowPipeline { ..Default::default() };
     gpu.bind_data(&model.to_flat_vertices());
     gpu.set_vattrib_ptr(8);
 
-    let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 6.0).into()).build();
+    let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 1.0).into()).build();
     let mut model_matrix = transform::Transform::default();
 
     let mut screen = minifb::Window::new(
@@ -143,6 +194,7 @@ fn main() {
         shader.normal_matrix = glam::Mat3::from_mat4(model_matrix.matrix()).inverse().transpose();
         shader.camera = camera.transform.pos;
 
+        gpu.render(&depth_shader);
         gpu.render(&shader);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 

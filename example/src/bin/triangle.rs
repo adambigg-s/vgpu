@@ -3,7 +3,8 @@ use virtual_gpu::{gpu, memory, shader};
 const SWIDTH: usize = 256 * 2;
 const SHEIGHT: usize = 196 * 2;
 const SSCALE: minifb::Scale = minifb::Scale::X2;
-const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
+// const SFILL: u32 = 0xffu32 << 24 | 200u32 << 16 | 200u32 << 8 | 180u32;
+const SFILL: u32 = 0xffu32 << 24 | 15u32 << 16 | 15u32 << 8 | 25u32;
 const STITLE: &str = "Triangle Example";
 
 #[rustfmt::skip]

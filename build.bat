@@ -1,3 +1,3 @@
 @echo on
 
-cargo run --bin barrel
+cargo run --bin statue

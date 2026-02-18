@@ -87,7 +87,7 @@ impl Mesh {
 pub mod texture {
     use std::{convert, path, sync};
 
-    use virtual_gpu::memory;
+    use virtual_gpu::memory::{self};
 
     pub static FALLBACK_TEXTURE: sync::LazyLock<Texture> = sync::LazyLock::new(Texture::debug_fallback);
 
@@ -135,7 +135,7 @@ pub mod texture {
             (t0 + t1 + t2 + t3) / 4.0
         }
 
-        fn debug_fallback() -> Self {
+        pub fn debug_fallback() -> Self {
             let mut buffer = memory::RenderTarget::new([8, 8]);
             (0..8).for_each(|i| {
                 (0..8).for_each(|j| {

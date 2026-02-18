@@ -1,3 +1,5 @@
+use std::ops;
+
 pub trait Raster {
     type Item;
 
@@ -59,6 +61,93 @@ impl<T> Default for Array<T> {
 unsafe impl<T> Send for Array<T> {}
 
 unsafe impl<T> Sync for Array<T> {}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Vector<T, const N: usize> {
+    items: [T; N],
+}
+
+impl<T, const N: usize> Vector<T, N>
+where
+    T: Clone + Copy,
+{
+    #[inline(always)]
+    pub fn to_array(self) -> [T; N] {
+        self.items
+    }
+}
+
+impl<T, const N: usize> Default for Vector<T, N>
+where
+    T: Default + Clone + Copy,
+{
+    #[inline(always)]
+    fn default() -> Self {
+        Self { items: [T::default(); N] }
+    }
+}
+
+impl<T, const N: usize> From<[T; N]> for Vector<T, N> {
+    #[inline(always)]
+    fn from(items: [T; N]) -> Self {
+        Self { items }
+    }
+}
+
+impl<T, const N: usize> From<Vector<T, N>> for [T; N] {
+    #[inline(always)]
+    fn from(value: Vector<T, N>) -> Self {
+        value.items
+    }
+}
+
+impl<T, const N: usize> ops::Add for Vector<T, N>
+where
+    T: Clone + Copy + ops::Add<Output = T>,
+{
+    type Output = Self;
+
+    #[inline(always)]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        (0..N).for_each(|i| {
+            self.items[i] = self.items[i] + rhs.items[i];
+        });
+        self
+    }
+}
+
+impl<T, D, const N: usize> ops::Mul<D> for Vector<T, N>
+where
+    T: Clone + Copy + ops::Mul<D, Output = T>,
+    D: Clone + Copy,
+{
+    type Output = Self;
+
+    #[inline(always)]
+    fn mul(mut self, rhs: D) -> Self::Output {
+        (0..N).for_each(|i| {
+            self.items[i] = self.items[i] * rhs;
+        });
+        self
+    }
+}
+
+impl<T, const N: usize> ops::Deref for Vector<T, N> {
+    type Target = [T; N];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+
+impl<T, const N: usize> ops::DerefMut for Vector<T, N> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.items
+    }
+}
 
 pub mod buffer {
     use std::{convert, mem, ops};
@@ -294,4 +383,3 @@ pub(crate) mod transmute {
         unsafe { &mut *inter }
     }
 }
-

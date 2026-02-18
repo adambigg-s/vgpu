@@ -4,7 +4,8 @@ use virtual_gpu::{gpu, memory, shader};
 const SWIDTH: usize = 256;
 const SHEIGHT: usize = 196;
 const SSCALE: minifb::Scale = minifb::Scale::X4;
-const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
+// const SFILL: u32 = 0xffu32 << 24 | 25u32 << 16 | 25u32 << 8 | 40u32;
+const SFILL: u32 = 0xffu32 << 24 | 15u32 << 16 | 15u32 << 8 | 25u32;
 const STITLE: &str = "Teapot Example";
 
 struct Pipeline {
