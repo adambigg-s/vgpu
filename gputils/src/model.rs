@@ -85,11 +85,14 @@ impl Mesh {
 }
 
 pub mod texture {
-    use std::{convert, path, sync};
+    use std::{convert, ops, path, sync};
 
-    use virtual_gpu::memory::{self};
+    use virtual_gpu::memory::{self, Raster};
 
     pub static FALLBACK_TEXTURE: sync::LazyLock<Texture> = sync::LazyLock::new(Texture::debug_fallback);
+
+    pub static FALLBACK_DEPTHTEX: sync::LazyLock<memory::RenderTarget<f32>> =
+        sync::LazyLock::new(|| memory::RenderTarget::new([0, 0]));
 
     #[derive(Default)]
     pub struct Texture {
@@ -117,6 +120,14 @@ pub mod texture {
                 width: (width - 1) as f32,
                 height: (height - 1) as f32,
             })
+        }
+
+        pub fn reference<'d>(&'d self) -> TextureRef<'d, glam::Vec3> {
+            TextureRef {
+                items: &self.items,
+                width: self.width,
+                height: self.height,
+            }
         }
 
         pub fn sample(&self, x: f32, y: f32) -> glam::Vec3 {
@@ -160,6 +171,63 @@ pub mod texture {
     {
         fn from(path: P) -> Self {
             Texture::import(path).unwrap()
+        }
+    }
+
+    pub struct TextureRef<'d, T> {
+        items: &'d memory::RenderTarget<T>,
+        width: f32,
+        height: f32,
+    }
+
+    impl<'d, T> TextureRef<'d, T>
+    where
+        T: Clone + Copy + ops::Add<T, Output = T> + ops::Div<f32, Output = T>,
+    {
+        pub fn sample(&self, x: f32, y: f32) -> T {
+            let [tx, ty] = [x.fract() * self.width, y.fract() * self.height];
+            *self.items.get([tx as usize, ty as usize])
+        }
+
+        pub fn sample_bilinear(&self, x: f32, y: f32) -> T {
+            let [fx, fy] = [x.fract() * self.width, y.fract() * self.height];
+            let [t0, t1, t2, t3] = [
+                *self.items.get([fx as usize, fy as usize]),
+                *self.items.get([fx as usize + 1, fy as usize]),
+                *self.items.get([fx as usize, fy as usize + 1]),
+                *self.items.get([fx as usize + 1, fy as usize + 1]),
+            ];
+            (t0 + t1 + t2 + t3) / 4.0
+        }
+    }
+
+    impl<'d> Default for TextureRef<'d, f32> {
+        fn default() -> Self {
+            Self {
+                items: &FALLBACK_DEPTHTEX,
+                width: FALLBACK_TEXTURE.width,
+                height: FALLBACK_TEXTURE.height,
+            }
+        }
+    }
+
+    impl<'d> Default for TextureRef<'d, glam::Vec3> {
+        fn default() -> Self {
+            Self {
+                items: &FALLBACK_TEXTURE.items,
+                width: FALLBACK_TEXTURE.width,
+                height: FALLBACK_TEXTURE.height,
+            }
+        }
+    }
+
+    impl<'r, T> From<&'r memory::RenderTarget<T>> for TextureRef<'r, T> {
+        fn from(items: &'r memory::RenderTarget<T>) -> Self {
+            Self {
+                items,
+                width: items.width() as f32 - 1.0,
+                height: items.height() as f32 - 1.0,
+            }
         }
     }
 }

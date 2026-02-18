@@ -67,8 +67,10 @@ where
         debug_assert!(
             self.color.size() == self.depth.size()
                 || self.color.size() == [0, 0] && self.depth.size() != [0, 0]
-                || self.color.size() != [0, 0] && self.depth.size() == [0, 0],
-            "Buffer dimensions must match, or ONE buffer must be zero-sized"
+                || self.color.size() != [0, 0] && self.depth.size() == [0, 0]
+                || S::pixel_write() && !S::depth_write()
+                || !S::pixel_write() && S::depth_write(),
+            "Buffer dimensions must match or ONE buffer must be zero-sized or write-disabled"
         );
         self.vao_queue = memory::Array::new([self.vao_raw.len() / self.vao_layout.peek().stride]);
         self.vscheduler.vertex_stage(

@@ -1,4 +1,4 @@
-#[derive(bon::Builder)]
+#[derive(Debug, bon::Builder)]
 pub struct Transform {
     #[builder(default)]
     pub scl: glam::Vec3,

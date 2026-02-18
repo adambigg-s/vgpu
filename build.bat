@@ -1,3 +1,3 @@
 @echo on
 
-cargo run --bin statue
+cargo run --bin statue --release

@@ -3,6 +3,7 @@
 An educational software GPU emulator in Rust
 
 ## Goals
+
 - Build a software GPU emulator
 - Use tile-based threaded rendering
 - Allow the user to define arbitrarily complex vertex & frag shaders in Rust
@@ -11,6 +12,7 @@ An educational software GPU emulator in Rust
 - Add a utils library with things like auto mip-mapped textures
 
 ## Examples
+
 ### Hello, Triangle
 ![alt text](demo/hello_triangle.png)
 
@@ -102,7 +104,7 @@ impl shader::Shader for Pipeline {
 </details>
 
 ### Barrel
-![alt text](demo/barrel_pbr.png)
+![alt text](demo/barrel_spin.gif)
 
 <details>
 
@@ -195,6 +197,9 @@ impl shader::Shader for Pipeline {
 ```
 
 </details>
+
+### Shadowmapped PBR Statue
+![alt text](demo/statue_pbr.png)
 
 ## Resources
 - https://learnopengl.com/

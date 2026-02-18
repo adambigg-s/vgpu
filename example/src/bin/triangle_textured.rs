@@ -1,40 +1,41 @@
-use virtual_gpu::{gpu, memory, shader};
+use gputils::model::texture;
+use virtual_gpu::{gpu, memory};
 
-const SWIDTH: usize = 256;
-const SHEIGHT: usize = 196;
-const SSCALE: minifb::Scale = minifb::Scale::X4;
-const SFILL: u32 = 0xffu32 << 24 | 15u32 << 16 | 15u32 << 8 | 25u32;
-const STITLE: &str = "Triangle Example";
+const SWIDTH: usize = 256 * 2;
+const SHEIGHT: usize = 196 * 2;
+const SSCALE: minifb::Scale = minifb::Scale::X2;
+const SFILL: u32 = 0xffu32 << 24 | 220u32 << 16 | 220u32 << 8 | 200u32;
+const STITLE: &str = "Textured Example";
 
 #[rustfmt::skip]
-const TRIANGLE: [f32; 18] = [
-    // Positions     Colors
-    -0.5, -0.5, 0.0,     1.0, 0.7, 0.0,
-     0.5, -0.5, 0.0,     0.0, 1.0, 0.7,
-     0.0,  0.5, 0.0,     0.7, 0.0, 1.0,
+const TRIANGLE: [f32; 15] = [
+    -0.5, -0.5, 0.0,      0.0,  0.0,
+     0.5, -0.5, 0.0,      1.0,  0.0,
+     0.0,  0.5, 0.0,      0.0,  1.0,
 ];
 
-struct Pipeline;
-impl shader::Shader for Pipeline {
-    // (position, color)
-    type Vertex = (glam::Vec3, glam::Vec3);
+#[derive(Default)]
+struct Pipeline<'r> {
+    texture: texture::TextureRef<'r, glam::Vec3>,
+}
 
-    // Vertex Color
-    type Interpolant = glam::Vec3;
+impl<'r> virtual_gpu::Shader for Pipeline<'r> {
+    type Vertex = (glam::Vec3, glam::Vec2);
 
-    // Fragment Color
+    type Interpolant = glam::Vec2;
+
     type Fragment = glam::Vec3;
 
     type Pixel = u32;
 
     fn vertex(&self, vertex_in: &Self::Vertex, position_out: &mut glam::Vec4) -> Self::Interpolant {
-        let (pos, col) = *vertex_in;
+        let (pos, tex_coords) = *vertex_in;
         *position_out = pos.to_homogeneous();
-        col
+        tex_coords
     }
 
     fn fragment(&self, frag_vertex_in: &Self::Interpolant) -> Self::Fragment {
-        *frag_vertex_in
+        self.texture.sample(frag_vertex_in.x, frag_vertex_in.y)
     }
 
     fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel {
@@ -47,13 +48,13 @@ impl shader::Shader for Pipeline {
 
 fn main() {
     let mut gpu = gpu::Gpu::builder()
-        .vertex_cores(4)
-        .raster_cores(8)
+        .vertex_cores(2)
+        .raster_cores(2)
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
     gpu.bind_data(&TRIANGLE.to_vec());
-    gpu.set_vattrib_ptr(6);
+    gpu.set_vattrib_ptr(5);
 
     let mut screen = minifb::Window::new(
         STITLE,
@@ -62,11 +63,15 @@ fn main() {
         minifb::WindowOptions { scale: SSCALE, ..Default::default() },
     )
     .unwrap();
+    let mut pipeline = Pipeline { ..Default::default() };
+    let texture = texture::Texture::import("vendor/textures/brick.jpg").unwrap();
 
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
-        gpu.render(&Pipeline);
+        pipeline.texture = texture.reference();
+
+        gpu.render(&pipeline);
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
         if screen.is_key_down(minifb::Key::Escape) {

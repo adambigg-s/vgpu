@@ -1,8 +1,9 @@
 use crate::transform;
 
 const FOV: f32 = 60.0f32.to_radians();
-const ZFAR: f32 = 500.0;
-const ZNEAR: f32 = 0.05;
+const ZFAR: f32 = 10.0;
+const ZNEAR: f32 = 0.1;
+const ORTHO: f32 = 1.0;
 
 #[derive(Default, bon::Builder)]
 pub struct Camera {
@@ -25,5 +26,9 @@ impl Camera {
 
     pub fn proj_matrix(&self, ar: f32) -> glam::Mat4 {
         glam::Mat4::perspective_rh_gl(FOV, ar, ZNEAR, ZFAR)
+    }
+
+    pub fn ortho_matrix(&self) -> glam::Mat4 {
+        glam::Mat4::orthographic_rh_gl(-ORTHO, ORTHO, -ORTHO, ORTHO, ZNEAR, ZFAR)
     }
 }
