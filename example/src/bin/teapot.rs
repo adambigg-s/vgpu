@@ -44,6 +44,7 @@ fn main() {
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
+    // let model = model::Mesh::new("vendor/lamp/vintage_oil_lamp_1k.obj").unwrap();
     let model = model::Mesh::new("vendor/teapot/teapot.obj").unwrap();
     gpu.bind_data(&model.to_flat_vertices());
     gpu.set_vattrib_ptr(8);

@@ -150,7 +150,8 @@ impl<'r> shader::Shader for PbrRenderPipeline<'r> {
         let light_uv = frag.light_view_pos.xy() * glam::Vec2::new(1.0, -1.0) * 0.5 + 0.5;
         let frag_depth = frag.light_view_pos.z;
         let shadow_depth = self.light_depth.sample_bilinear(light_uv.x, light_uv.y);
-        let shadow = if frag_depth > shadow_depth + 0.0015 { 0.0 } else { 1.0 };
+        let in_shadow = frag_depth > shadow_depth + 0.0015;
+        let shadow = if in_shadow { 0.0 } else { 1.0 };
 
         let tn = normal_map * 2.0 - glam::Vec3::ONE;
         let tan_norm =
@@ -197,9 +198,10 @@ impl<'r> shader::Shader for PbrRenderPipeline<'r> {
         let radiance = glam::Vec3::splat(self.light_intensity) * attenutation;
 
         let direct = (diffuse + specular) * radiance * ndl * shadow;
-        let ambient = glam::Vec3::splat(0.06) * albedo * ao;
+        let ambient = glam::Vec3::splat(0.01) * albedo * ao;
+        let indirect = if in_shadow { albedo * ao * 0.02 } else { glam::Vec3::ZERO };
 
-        ambient + direct + self.material.emissive
+        ambient + direct + indirect + self.material.emissive
     }
 
     #[inline(always)]
@@ -232,17 +234,17 @@ fn main() {
     let mut statue = Object {
         mesh: model::Mesh::new("vendor/statue/lion_head_1k.obj").unwrap().to_flat_vertices(),
         material: PbrMaterial {
-            albedo_tint: glam::Vec3::ONE,
+            albedo_tint: glam::vec3(0.95, 0.95, 0.88),
             emissive: glam::Vec3::ZERO,
-            rough_factor: 0.7,
-            metal_factor: 1.3,
-            ao_factor: 0.9,
-            reflect_factor: 0.05,
-            normal_factor: 1.0,
+            rough_factor: 0.8,
+            metal_factor: 0.9,
+            ao_factor: 1.3,
+            reflect_factor: 0.04,
+            normal_factor: 1.3,
         },
         transform: transform::Transform::builder()
-            .pos(glam::vec3(0.11999998, -0.29999998, 0.08999999))
-            .rot(glam::quat(0.0, 0.119329154, 0.0, 0.9896322))
+            .pos(glam::vec3(0.20000003, -0.29999998, 0.049999997))
+            .rot(glam::quat(0.0, 0.09983309, 0.0, 0.99500126))
             .scl(glam::Vec3::splat(1.67))
             .build(),
         shader: PbrRenderPipeline {
@@ -258,12 +260,12 @@ fn main() {
     let mut table = Object {
         mesh: model::Mesh::new("vendor/table/ClassicConsole_01_1k.obj").unwrap().to_flat_vertices(),
         material: PbrMaterial {
-            albedo_tint: glam::Vec3::splat(0.95),
+            albedo_tint: glam::vec3(0.9, 0.77, 0.77),
             emissive: glam::Vec3::ZERO,
             rough_factor: 1.0,
             metal_factor: 0.5,
             ao_factor: 0.7,
-            reflect_factor: 0.02,
+            reflect_factor: 0.04,
             normal_factor: 1.4,
         },
         transform: transform::Transform::builder()
@@ -281,11 +283,37 @@ fn main() {
         },
     };
 
+    let mut lamp = Object {
+        mesh: model::Mesh::new("vendor/lamp/vintage_oil_lamp_1k.obj").unwrap().to_flat_vertices(),
+        material: PbrMaterial {
+            albedo_tint: glam::vec3(1.0, 0.99, 0.93),
+            emissive: glam::Vec3::ZERO,
+            rough_factor: 0.7,
+            metal_factor: 1.5,
+            ao_factor: 1.0,
+            reflect_factor: 0.09,
+            normal_factor: 1.0,
+        },
+        transform: transform::Transform::builder()
+            .pos(glam::vec3(-0.22000001, -0.31999996, 0.13999999))
+            .rot(glam::quat(0.0, 0.41686904, 0.0, 0.90896195))
+            .scl(glam::Vec3::splat(0.67))
+            .build(),
+        shader: PbrRenderPipeline {
+            textures: PbrTextures {
+                diffuse: "vendor/lamp/vintage_oil_lamp_diff_1k.jpg".into(),
+                normals: "vendor/lamp/vintage_oil_lamp_nor_gl_1k.jpg".into(),
+                ao_r_ms: "vendor/lamp/vintage_oil_lamp_arm_1k.jpg".into(),
+            },
+            ..Default::default()
+        },
+    };
+
     gpu.set_vattrib_ptr(8);
 
     let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 1.0).into()).build();
     let light = camera::Camera::builder().transform(glam::vec3(25.0, 25.0, 10.0).into()).build();
-    let brightness = 10000.0;
+    let brightness = 7500.0;
 
     let mut screen = minifb::Window::new(
         STITLE,
@@ -307,6 +335,9 @@ fn main() {
         gpu.render(&depth_shader);
         depth_shader.m_matrix = statue.transform.matrix();
         gpu.bind_data(&statue.mesh);
+        gpu.render(&depth_shader);
+        depth_shader.m_matrix = lamp.transform.matrix();
+        gpu.bind_data(&lamp.mesh);
         gpu.render(&depth_shader);
 
         table.shader.model_matrix = table.transform.matrix();
@@ -339,6 +370,21 @@ fn main() {
         statue.shader.light_vp = depth_shader.vp_matrix;
         statue.shader.material = statue.material;
 
+        lamp.shader.model_matrix = lamp.transform.matrix();
+        lamp.shader.mvp_matrix = camera.proj_matrix(SWIDTH as f32 / SHEIGHT as f32)
+            * camera.view_matrix()
+            * lamp.shader.model_matrix;
+        lamp.shader.normal_matrix = glam::Mat3::from_mat4(lamp.shader.model_matrix).inverse().transpose();
+        lamp.shader.camera = camera.transform.pos;
+        lamp.shader.light = light.transform.pos;
+        lamp.shader.light_intensity = brightness;
+        lamp.shader.light_depth = unsafe {
+            let depth = &shadow_depth as *const memory::RenderTarget<f32>;
+            (&*depth).into()
+        };
+        lamp.shader.light_vp = depth_shader.vp_matrix;
+        lamp.shader.material = lamp.material;
+
         mem::swap(&mut shadow_depth, &mut gpu.depth);
         gpu.depth.fill(f32::INFINITY);
         gpu.color.fill(SFILL);
@@ -347,11 +393,13 @@ fn main() {
         gpu.render(&table.shader);
         gpu.bind_data(&statue.mesh);
         gpu.render(&statue.shader);
+        gpu.bind_data(&lamp.mesh);
+        gpu.render(&lamp.shader);
 
         screen.update_with_buffer(&gpu.color, SWIDTH, SHEIGHT).unwrap();
 
-        example::model_rotation(&mut statue.transform, &screen);
-        example::model_translation(&mut statue.transform, &screen);
+        example::model_rotation(&mut lamp.transform, &screen);
+        example::model_translation(&mut lamp.transform, &screen);
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
