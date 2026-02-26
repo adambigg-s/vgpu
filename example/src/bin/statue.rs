@@ -1,4 +1,4 @@
-use std::{f32, mem};
+use std::mem;
 
 use glam::{Vec3Swizzles, Vec4Swizzles};
 use gputils::{
@@ -8,12 +8,6 @@ use gputils::{
 };
 use virtual_gpu::{gpu, memory, shader};
 
-// const SWIDTH: usize = 256 * 2;
-// const SHEIGHT: usize = 196 * 2;
-// const SSCALE: minifb::Scale = minifb::Scale::X2;
-// const SWIDTH: usize = 256;
-// const SHEIGHT: usize = 196;
-// const SSCALE: minifb::Scale = minifb::Scale::X4;
 const SWIDTH: usize = 1920;
 const SHEIGHT: usize = 1080;
 const SSCALE: minifb::Scale = minifb::Scale::X1;
@@ -26,8 +20,20 @@ where
     S: shader::Shader,
 {
     mesh: Vec<f32>,
+    material: PbrMaterial,
     transform: transform::Transform,
     shader: S,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct PbrMaterial {
+    albedo_tint: glam::Vec3,
+    emissive: glam::Vec3,
+    rough_factor: f32,
+    metal_factor: f32,
+    ao_factor: f32,
+    reflect_factor: f32,
+    normal_factor: f32,
 }
 
 #[derive(Default)]
@@ -79,15 +85,17 @@ impl shader::Shader for ShadowPipeline {
 }
 
 #[derive(Default)]
-struct PbrPipeline<'r> {
+struct PbrRenderPipeline<'r> {
     model_matrix: glam::Mat4,
     mvp_matrix: glam::Mat4,
     normal_matrix: glam::Mat3,
 
     textures: PbrTextures,
+    material: PbrMaterial,
 
     light_vp: glam::Mat4,
     light_depth: texture::TextureRef<'r, f32>,
+    light_intensity: f32,
     light: glam::Vec3,
     camera: glam::Vec3,
 }
@@ -101,7 +109,7 @@ struct Interpolant {
     uv: glam::Vec2,
 }
 
-impl<'r> shader::Shader for PbrPipeline<'r> {
+impl<'r> shader::Shader for PbrRenderPipeline<'r> {
     type Vertex = model::Vertex;
 
     type Interpolant = Interpolant;
@@ -127,75 +135,81 @@ impl<'r> shader::Shader for PbrPipeline<'r> {
 
     #[inline(always)]
     fn fragment(&self, frag: &Self::Interpolant) -> Self::Fragment {
+        const PI: f32 = std::f32::consts::PI;
+        const GAMMA_MOD: f32 = 2.2;
+
         let diffuse_map = self.textures.diffuse.sample_bilinear(frag.uv.x, frag.uv.y);
         let arm_map = self.textures.ao_r_ms.sample_bilinear(frag.uv.x, frag.uv.y);
-        let normal_map = self.textures.normals.sample(frag.uv.x, frag.uv.y);
+        let normal_map = self.textures.normals.sample_bilinear(frag.uv.x, frag.uv.y);
 
-        let [ao, rough, metal] = arm_map.to_array();
-        let albedo = diffuse_map.powf(2.2);
+        let albedo = diffuse_map.powf(GAMMA_MOD) * self.material.albedo_tint;
+        let ao = (arm_map.x * self.material.ao_factor).clamp(0.0, 1.0);
+        let rough = (arm_map.y * self.material.rough_factor).clamp(0.05, 1.0);
+        let metal = (arm_map.z * self.material.metal_factor).clamp(0.0, 1.0);
 
         let light_uv = frag.light_view_pos.xy() * glam::Vec2::new(1.0, -1.0) * 0.5 + 0.5;
         let frag_depth = frag.light_view_pos.z;
         let shadow_depth = self.light_depth.sample_bilinear(light_uv.x, light_uv.y);
         let shadow = if frag_depth > shadow_depth + 0.0015 { 0.0 } else { 1.0 };
 
-        let tangent_normal = normal_map * 2.0 - glam::Vec3::ONE;
-        let normal = frag.nor.normalize();
-        let tangent = if normal.y.abs() < 0.9999 {
-            normal.cross(glam::Vec3::Y).normalize()
+        let tn = normal_map * 2.0 - glam::Vec3::ONE;
+        let tan_norm =
+            glam::vec3(tn.x * self.material.normal_factor, tn.y * self.material.normal_factor, tn.z)
+                .normalize();
+        let norm = frag.nor.normalize();
+        let tan = if norm.y.abs() < 0.9999 {
+            norm.cross(glam::Vec3::Y).normalize()
         }
         else {
-            normal.cross(glam::Vec3::X).normalize()
+            norm.cross(glam::Vec3::X).normalize()
         };
-        let bitangent = normal.cross(tangent);
-        let world_normal =
-            (tangent * tangent_normal.x + bitangent * tangent_normal.y + normal * tangent_normal.z)
-                .normalize();
+        let bi_tan = norm.cross(tan);
+        let n = (tan * tan_norm.x + bi_tan * tan_norm.y + norm * tan_norm.z).normalize();
 
         let l = (self.light - frag.pos).normalize();
         let v = (self.camera - frag.pos).normalize();
         let h = (l + v).normalize();
 
-        let ndl = world_normal.dot(l).max(0.0);
-        let ndv = world_normal.dot(v).max(0.0);
-        let ndh = world_normal.dot(h).max(0.0);
+        let ndl = n.dot(l).max(0.0);
+        let ndv = n.dot(v).max(0.0);
+        let ndh = n.dot(h).max(0.0);
         let hdv = h.dot(v).max(0.0);
 
-        let f0 = glam::Vec3::splat(0.04).lerp(albedo, metal);
+        let f0 = glam::Vec3::splat(self.material.reflect_factor).lerp(albedo, metal);
         let alpha = rough * rough;
         let alpha2 = alpha * alpha;
 
         let demon_d = ndh * ndh * (alpha2 - 1.0) + 1.0;
-        let d = alpha2 / (f32::consts::PI * demon_d * demon_d + 1e-6);
+        let d = alpha2 / (PI * demon_d * demon_d + 1e-6);
 
-        let k = (rough + 1.0) * (rough + 1.0) / 8.0;
-        let g1_v = ndv / (ndv * (1.0 - k) + k);
-        let g1_l = ndl / (ndl * (1.0 - k) + k);
-        let g = g1_v * g1_l;
+        let k = (rough + 1.0).powi(2) / 8.0;
+        let g = ndv / (ndv * (1.0 - k) + k) * (ndl / (ndl * (1.0 - k) + k));
 
         let f = f0 + (glam::Vec3::ONE - f0) * (1.0 - hdv).powf(5.0);
 
         let specular = (d * g * f) / (4.0 * ndv * ndl + 1e-6);
 
-        let kd = (glam::Vec3::ONE - f) * (1.0 - metal);
-        let diffuse = kd * albedo / f32::consts::PI;
+        let kd = (glam::Vec3::ONE - f0) * (1.0 - metal);
+        let diffuse = kd * albedo / PI;
 
-        let light_color = glam::Vec3::ONE * 5.0;
-        let lo = (diffuse + specular) * light_color * ndl * shadow;
+        let distance = (self.light - frag.pos).length();
+        let attenutation = (distance * distance).recip();
+        let radiance = glam::Vec3::splat(self.light_intensity) * attenutation;
 
-        let ambient = glam::Vec3::splat(0.03) * albedo * ao;
+        let direct = (diffuse + specular) * radiance * ndl * shadow;
+        let ambient = glam::Vec3::splat(0.06) * albedo * ao;
 
-        ambient + lo
+        ambient + direct + self.material.emissive
     }
 
     #[inline(always)]
     fn pixel(&self, fragment_in: &Self::Fragment) -> Self::Pixel {
-        let gamma = 1.0 / 2.2;
-        let color = fragment_in.clamp(glam::Vec3::ZERO, glam::Vec3::ONE).powf(gamma);
+        const GAMMA: f32 = 1.0 / 2.2;
+        let color = (*fragment_in / (*fragment_in + glam::Vec3::ONE)).powf(GAMMA);
         let r = (color.x * 255.9999) as u8 as u32;
         let g = (color.y * 255.9999) as u8 as u32;
         let b = (color.z * 255.9999) as u8 as u32;
-        0xffu32 << 24 | r << 16 | g << 8 | b
+        0xff_u32 << 24 | r << 16 | g << 8 | b
     }
 
     #[inline(always)]
@@ -207,7 +221,7 @@ impl<'r> shader::Shader for PbrPipeline<'r> {
 fn main() {
     let mut gpu = gpu::Gpu::builder()
         .vertex_cores(4)
-        .raster_cores(8)
+        .raster_cores(16)
         .color(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .depth(memory::RenderTarget::new([SWIDTH, SHEIGHT]))
         .build();
@@ -217,8 +231,21 @@ fn main() {
 
     let mut statue = Object {
         mesh: model::Mesh::new("vendor/statue/lion_head_1k.obj").unwrap().to_flat_vertices(),
-        transform: transform::Transform { scl: glam::Vec3::splat(1.67), ..Default::default() },
-        shader: PbrPipeline {
+        material: PbrMaterial {
+            albedo_tint: glam::Vec3::ONE,
+            emissive: glam::Vec3::ZERO,
+            rough_factor: 0.7,
+            metal_factor: 1.3,
+            ao_factor: 0.9,
+            reflect_factor: 0.05,
+            normal_factor: 1.0,
+        },
+        transform: transform::Transform::builder()
+            .pos(glam::vec3(0.11999998, -0.29999998, 0.08999999))
+            .rot(glam::quat(0.0, 0.119329154, 0.0, 0.9896322))
+            .scl(glam::Vec3::splat(1.67))
+            .build(),
+        shader: PbrRenderPipeline {
             textures: PbrTextures {
                 diffuse: "vendor/statue/lion_head_diff_1k.jpg".into(),
                 normals: "vendor/statue/lion_head_nor_gl_1k.jpg".into(),
@@ -230,12 +257,21 @@ fn main() {
 
     let mut table = Object {
         mesh: model::Mesh::new("vendor/table/ClassicConsole_01_1k.obj").unwrap().to_flat_vertices(),
+        material: PbrMaterial {
+            albedo_tint: glam::Vec3::splat(0.95),
+            emissive: glam::Vec3::ZERO,
+            rough_factor: 1.0,
+            metal_factor: 0.5,
+            ao_factor: 0.7,
+            reflect_factor: 0.02,
+            normal_factor: 1.4,
+        },
         transform: transform::Transform::builder()
             .pos(glam::vec3(0.08999999, -1.2499992, 0.07999999))
             .rot(glam::quat(0.0, 0.09485673, 0.0, 0.99548596))
             .scl(glam::Vec3::ONE)
             .build(),
-        shader: PbrPipeline {
+        shader: PbrRenderPipeline {
             textures: PbrTextures {
                 diffuse: "vendor/table/ClassicConsole_01_diff_1k.jpg".into(),
                 normals: "vendor/table/ClassicConsole_01_nor_gl_1k.jpg".into(),
@@ -249,6 +285,7 @@ fn main() {
 
     let camera = camera::Camera::builder().transform(glam::vec3(0.0, 0.0, 1.0).into()).build();
     let light = camera::Camera::builder().transform(glam::vec3(25.0, 25.0, 10.0).into()).build();
+    let brightness = 10000.0;
 
     let mut screen = minifb::Window::new(
         STITLE,
@@ -279,11 +316,13 @@ fn main() {
         table.shader.normal_matrix = glam::Mat3::from_mat4(table.shader.model_matrix).inverse().transpose();
         table.shader.camera = camera.transform.pos;
         table.shader.light = light.transform.pos;
+        table.shader.light_intensity = brightness;
         table.shader.light_depth = unsafe {
             let depth = &shadow_depth as *const memory::RenderTarget<f32>;
             (&*depth).into()
         };
         table.shader.light_vp = depth_shader.vp_matrix;
+        table.shader.material = table.material;
 
         statue.shader.model_matrix = statue.transform.matrix();
         statue.shader.mvp_matrix = camera.proj_matrix(SWIDTH as f32 / SHEIGHT as f32)
@@ -292,11 +331,13 @@ fn main() {
         statue.shader.normal_matrix = glam::Mat3::from_mat4(statue.shader.model_matrix).inverse().transpose();
         statue.shader.camera = camera.transform.pos;
         statue.shader.light = light.transform.pos;
+        statue.shader.light_intensity = brightness;
         statue.shader.light_depth = unsafe {
             let depth = &shadow_depth as *const memory::RenderTarget<f32>;
             (&*depth).into()
         };
         statue.shader.light_vp = depth_shader.vp_matrix;
+        statue.shader.material = statue.material;
 
         mem::swap(&mut shadow_depth, &mut gpu.depth);
         gpu.depth.fill(f32::INFINITY);

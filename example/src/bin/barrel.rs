@@ -6,10 +6,9 @@ use gputils::{
 };
 use virtual_gpu::{gpu, memory, shader};
 
-const SWIDTH: usize = 256 * 4;
-const SHEIGHT: usize = 196 * 4;
+const SWIDTH: usize = 1920;
+const SHEIGHT: usize = 1080;
 const SSCALE: minifb::Scale = minifb::Scale::X1;
-// const SFILL: u32 = 0xffu32 << 24 | 220u32 << 16 | 220u32 << 8 | 200u32;
 const SFILL: u32 = 0xffu32 << 24 | 220u32 << 16 | 220u32 << 8 | 200u32;
 const STITLE: &str = "Barrel Example";
 
@@ -131,8 +130,6 @@ fn main() {
     )
     .unwrap();
 
-    let mut timer = std::time::Instant::now();
-    let mut average_fps = 0.0;
     loop {
         gpu.color.fill(SFILL);
         gpu.depth.fill(f32::INFINITY);
@@ -151,13 +148,5 @@ fn main() {
         if screen.is_key_down(minifb::Key::Escape) {
             break;
         }
-
-        let elapsed = timer.elapsed().as_secs_f64().recip();
-        average_fps += elapsed;
-        average_fps /= 2.0;
-        println!("approx fps: {:.2}", elapsed);
-        timer = std::time::Instant::now();
     }
-
-    println!("averaged fps: {:?}", average_fps);
 }
